@@ -1,2 +1,2 @@
-# ItWorkedLocally
+# ExpenseTracker
 Turning brain glitches into software.
