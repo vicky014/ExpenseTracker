@@ -17,7 +17,8 @@ import {
   Award,
   AlertTriangle,
   RotateCcw,
-  PieChart as ChartIcon
+  PieChart as ChartIcon,
+  Upload
 } from 'lucide-react';
 import { 
   AreaChart, 
@@ -90,6 +91,20 @@ interface Loan {
 interface LoanWithPayments {
   loan: Loan;
   payments: EmiPayment[];
+}
+
+interface ParsedSchedulePayment {
+  dueDate: string;
+  paidDate: string | null;
+  amount: number;
+  isPaid: boolean;
+}
+
+interface ScheduleUploadResult {
+  detectedLoan: Record<string, string | number>;
+  payments: ParsedSchedulePayment[];
+  missingFields: string[];
+  warnings: string[];
 }
 
 interface Budget {
@@ -165,6 +180,20 @@ export default function App() {
   });
   
   const [isSimpleLoan, setIsSimpleLoan] = useState<boolean>(false);
+  const [loanRegistrationMode, setLoanRegistrationMode] = useState<'standard' | 'simple' | 'slice'>('standard');
+  const [sliceStartMonth, setSliceStartMonth] = useState<string>('2026-06');
+  const [sliceTenure, setSliceTenure] = useState<string>('6');
+  const [sliceAmounts, setSliceAmounts] = useState<Record<string, string>>({});
+  const [editingLoanId, setEditingLoanId] = useState<number | null>(null);
+  const [editLoanForm, setEditLoanForm] = useState({
+    name: '',
+    principal: '',
+    rate: '',
+    tenure: '',
+    emi: '',
+    lender: '',
+    type: 'Home'
+  });
 
   const [newLoan, setNewLoan] = useState({
     name: '',
@@ -175,6 +204,20 @@ export default function App() {
     lender: '',
     type: 'Home'
   });
+
+  const [scheduleFile, setScheduleFile] = useState<File | null>(null);
+  const [scheduleUploadResult, setScheduleUploadResult] = useState<ScheduleUploadResult | null>(null);
+  const [scheduleUploadForm, setScheduleUploadForm] = useState({
+    name: '',
+    principal: '',
+    rate: '0',
+    tenure: '',
+    emi: '',
+    lender: '',
+    type: 'Home'
+  });
+  const [scheduleUploadError, setScheduleUploadError] = useState<string>('');
+  const [isUploadingSchedule, setIsUploadingSchedule] = useState<boolean>(false);
 
   const [newIncome, setNewIncome] = useState({
     type: 'Salary',
@@ -194,6 +237,7 @@ export default function App() {
   // Recalculate loading + NLP result display
   const [isRecalculating, setIsRecalculating] = useState<boolean>(false);
   const [nlpParsedResult, setNlpParsedResult] = useState<{ description: string; lumpSum: number; salaryHikePercent: number; extraMonthly: number } | null>(null);
+  const [isRefreshingData, setIsRefreshingData] = useState<boolean>(false);
 
   // Income Inline Edit State
   const [editingIncomeId, setEditingIncomeId] = useState<number | null>(null);
@@ -204,11 +248,35 @@ export default function App() {
     loadAllData();
   }, []);
 
+  // When sliders or raw data dependencies change, compute locally and instantly for fluid 60fps responses
   useEffect(() => {
     if (isOnboarded && incomes.length > 0) {
-      calculateAiProjections();
+      calculateAiProjectionsLocal();
     }
   }, [incomes, expenses, loansWithPayments, simExtraMonthly, simLumpSum, simSalaryHike, isOnboarded]);
+
+  // Initial load backend fetch
+  useEffect(() => {
+    if (isOnboarded && incomes.length > 0 && !isUsingFallback) {
+      calculateAiProjections();
+    }
+  }, [isOnboarded]);
+
+  const handleRefreshData = async () => {
+    setIsRefreshingData(true);
+    try {
+      await loadAllData();
+      if (!isUsingFallback) {
+        await calculateAiProjections();
+      } else {
+        calculateAiProjectionsLocal();
+      }
+    } catch (err) {
+      console.error('Failed to refresh data', err);
+    } finally {
+      setIsRefreshingData(false);
+    }
+  };
 
   const loadAllData = async () => {
     try {
@@ -385,7 +453,6 @@ Be generous in interpretation. "joining bonus", "sign-on bonus", "relocation all
     try {
       // ── Step 1: Parse intent from custom text using LLM or backend regex ──
       let parsedLumpSum = simLumpSum;
-      let parsedLumpSumOffset = 3;
       let parsedExtraMonthly = simExtraMonthly;
       let parsedSalaryHike = simSalaryHike;
       let parsedDescription = '';
@@ -395,7 +462,6 @@ Be generous in interpretation. "joining bonus", "sign-on bonus", "relocation all
         const llmResult = await parseIntentWithLLM(simCustomText);
         if (llmResult) {
           parsedLumpSum = simLumpSum + (llmResult.lumpSum || 0);
-          parsedLumpSumOffset = llmResult.lumpSumMonthOffset || 1;
           parsedExtraMonthly = simExtraMonthly + (llmResult.extraMonthly || 0);
           parsedSalaryHike = simSalaryHike + (llmResult.salaryHikePercent || 0);
           parsedDescription = llmResult.description || '';
@@ -451,7 +517,9 @@ Be generous in interpretation. "joining bonus", "sign-on bonus", "relocation all
     const totalIncome = incomes.reduce((sum, item) => sum + item.amount, 0);
     const totalExpenses = expenses.reduce((sum, item) => sum + item.amount, 0) || 28000;
     const totalEmi = loansWithPayments.reduce((sum, item) => sum + item.loan.emi, 0);
-    const totalDebtValue = loansWithPayments.reduce((sum, item) => sum + item.loan.principal, 0);
+    const totalDebtValue = loansWithPayments.reduce((sum, item) => {
+      return sum + item.payments.filter(p => !p.isPaid).reduce((s, p) => s + p.amount, 0);
+    }, 0);
     const surplus = Math.max(0, totalIncome - totalExpenses - totalEmi);
 
     // ── Parse simCustomText (NLP) ──
@@ -531,7 +599,7 @@ Be generous in interpretation. "joining bonus", "sign-on bonus", "relocation all
     const runSim = (strategy: string) => {
       const localLoans = loansWithPayments.map(lw => ({
         name: lw.loan.name,
-        balance: lw.loan.principal - (lw.payments.filter(p => p.isPaid).length * lw.loan.emi),
+        balance: lw.payments.filter(p => !p.isPaid).reduce((s, p) => s + p.amount, 0),
         rate: lw.loan.rate,
         emi: lw.loan.emi
       })).filter(l => l.balance > 0);
@@ -564,14 +632,14 @@ Be generous in interpretation. "joining bonus", "sign-on bonus", "relocation all
         monthIndex++;
         const currentMonthDate = new Date(today.getFullYear(), today.getMonth() + monthIndex, 1);
         let monthTotalPaid = 0;
-        let activeExtra = activeExtraPool;
+        let activeExtra = strategy === 'Baseline' ? 0 : activeExtraPool;
 
         // Lump sum at NLP-detected month offset
-        if (monthIndex === effectiveLumpSumOffset) {
+        if (strategy !== 'Baseline' && monthIndex === effectiveLumpSumOffset) {
           activeExtra += effectiveLumpSum;
         }
         // Salary hike from NLP offset month onward
-        if (monthIndex >= effectiveLumpSumOffset) {
+        if (strategy !== 'Baseline' && monthIndex >= effectiveLumpSumOffset) {
           activeExtra += effectiveSalaryHikeAmt;
         }
 
@@ -790,8 +858,100 @@ Be generous in interpretation. "joining bonus", "sign-on bonus", "relocation all
     }
   };
 
+  const getSliceMonths = (startMonthStr: string, tenureVal: number) => {
+    if (!startMonthStr) return [];
+    const monthsList = [];
+    const [y, m] = startMonthStr.split('-');
+    const year = parseInt(y);
+    const month = parseInt(m) - 1; // 0-indexed
+    for (let i = 0; i < tenureVal; i++) {
+      const d = new Date(year, month + i, 1);
+      monthsList.push({
+        dateStr: d.toISOString().split('T')[0],
+        label: d.toLocaleDateString('en-US', { month: 'short', year: 'numeric' })
+      });
+    }
+    return monthsList;
+  };
+
   const handleAddLoan = async (e: React.FormEvent) => {
     e.preventDefault();
+
+    if (loanRegistrationMode === 'slice') {
+      const tenureVal = parseInt(sliceTenure) || 0;
+      if (!newLoan.name || tenureVal <= 0) return;
+      const sliceMonthsList = getSliceMonths(sliceStartMonth, tenureVal);
+      const parsedPayments = sliceMonthsList.map((m) => {
+        const amount = parseFloat(sliceAmounts[m.dateStr]) || 0;
+        return {
+          dueDate: m.dateStr,
+          paidDate: null,
+          amount,
+          isPaid: false
+        };
+      });
+
+      if (parsedPayments.some(p => p.amount <= 0)) {
+        alert('Please enter a valid amount greater than 0 for all months.');
+        return;
+      }
+
+      const totalPrincipal = parsedPayments.reduce((sum, p) => sum + p.amount, 0);
+
+      const loanPayload = {
+        userId: 1,
+        name: newLoan.name,
+        principal: totalPrincipal,
+        rate: 0.0,
+        tenure: tenureVal,
+        emi: parsedPayments[0].amount, // baseline EMI set as first installment
+        lender: newLoan.lender || 'Slice Card',
+        type: newLoan.type,
+        startDate: sliceMonthsList[0].dateStr
+      };
+
+      if (isUsingFallback) {
+        const addedLoan: Loan = {
+          id: Date.now(),
+          userId: 1,
+          name: loanPayload.name,
+          principal: totalPrincipal,
+          rate: 0.0,
+          tenure: tenureVal,
+          emi: loanPayload.emi,
+          startDate: loanPayload.startDate,
+          lender: loanPayload.lender,
+          type: loanPayload.type
+        };
+
+        const generatedPayments: EmiPayment[] = parsedPayments.map((p, i) => ({
+          id: Date.now() + 1000 + i,
+          loanId: addedLoan.id,
+          dueDate: p.dueDate,
+          paidDate: null,
+          amount: p.amount,
+          isPaid: false
+        }));
+
+        const updated = [...loansWithPayments, { loan: addedLoan, payments: generatedPayments }];
+        setLoansWithPayments(updated);
+        localStorage.setItem('loans', JSON.stringify(updated));
+        calculateAiProjectionsLocal();
+      } else {
+        await fetch(`${API_BASE}/loans/from-schedule`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ loan: loanPayload, payments: parsedPayments })
+        });
+        loadAllData();
+      }
+
+      // Reset form
+      setNewLoan({ name: '', principal: '', rate: '', tenure: '', emi: '', lender: '', type: 'Home' });
+      setSliceAmounts({});
+      return;
+    }
+
     if (isSimpleLoan) {
       if (!newLoan.name || !newLoan.emi || !newLoan.tenure) return;
     } else {
@@ -860,6 +1020,165 @@ Be generous in interpretation. "joining bonus", "sign-on bonus", "relocation all
     setNewLoan({ name: '', principal: '', rate: '', tenure: '', emi: '', lender: '', type: 'Home' });
   };
 
+  const applyDetectedScheduleLoan = (result: ScheduleUploadResult) => {
+    const detected = result.detectedLoan || {};
+    setScheduleUploadForm({
+      name: String(detected.name || ''),
+      principal: String(detected.principal || ''),
+      rate: String(detected.rate || '0'),
+      tenure: String(detected.tenure || result.payments.length || ''),
+      emi: String(detected.emi || ''),
+      lender: String(detected.lender || ''),
+      type: String(detected.type || 'Home')
+    });
+  };
+
+  const parseScheduleCsvFallback = async (file: File): Promise<ScheduleUploadResult> => {
+    const text = await file.text();
+    const lines = text.split(/\r?\n/).filter(line => line.trim());
+    const rows = lines.map(line => line.split(',').map(cell => cell.replace(/^"|"$/g, '').trim()));
+    const normalize = (value: string) => value.toLowerCase().replace(/[^a-z0-9 ]/g, ' ').replace(/\s+/g, ' ').trim();
+    const findColumn = (headers: string[], aliases: string[]) => headers.findIndex(header => aliases.some(alias => header.includes(alias)));
+    const headerIndex = rows.findIndex(row => {
+      const headers = row.map(normalize);
+      return findColumn(headers, ['due date', 'emi date', 'payment date', 'installment date', 'date']) >= 0
+        && findColumn(headers, ['emi', 'installment', 'payment', 'amount', 'total']) >= 0;
+    });
+
+    if (headerIndex < 0) {
+      return { detectedLoan: {}, payments: [], missingFields: ['payments'], warnings: ['Could not detect due date and amount columns.'] };
+    }
+
+    const headers = rows[headerIndex].map(normalize);
+    const dateCol = findColumn(headers, ['due date', 'emi date', 'payment date', 'installment date', 'date']);
+    const amountCol = findColumn(headers, ['emi', 'installment', 'payment', 'amount', 'total']);
+    const statusCol = findColumn(headers, ['status', 'paid']);
+    const parseDate = (value: string) => {
+      const raw = value.trim();
+      if (!raw) return '';
+      const iso = new Date(raw);
+      if (!Number.isNaN(iso.getTime())) return iso.toISOString().split('T')[0];
+      const match = raw.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{4})$/);
+      if (!match) return '';
+      const [, d, m, y] = match;
+      return `${y}-${m.padStart(2, '0')}-${d.padStart(2, '0')}`;
+    };
+    const parseMoney = (value: string) => {
+      const match = value.replace(/,/g, '').match(/-?\d+(?:\.\d+)?/);
+      return match ? parseFloat(match[0]) : 0;
+    };
+
+    const payments = rows.slice(headerIndex + 1).map(row => {
+      const dueDate = parseDate(row[dateCol] || '');
+      const amount = parseMoney(row[amountCol] || '');
+      const status = (row[statusCol] || '').toLowerCase();
+      return { dueDate, paidDate: null, amount, isPaid: status.includes('paid') || status === 'yes' || status === 'true' };
+    }).filter(payment => payment.dueDate && payment.amount > 0);
+    const emi = payments[0]?.amount || '';
+    const result: ScheduleUploadResult = {
+      detectedLoan: { tenure: payments.length, emi },
+      payments,
+      missingFields: ['name', 'principal', 'lender', 'type'],
+      warnings: []
+    };
+    return result;
+  };
+
+  const handleUploadRepaymentSchedule = async () => {
+    setScheduleUploadError('');
+    setScheduleUploadResult(null);
+    if (!scheduleFile) {
+      setScheduleUploadError('Please select a CSV, XLSX, or PDF repayment schedule.');
+      return;
+    }
+
+    setIsUploadingSchedule(true);
+    try {
+      let result: ScheduleUploadResult;
+      if (isUsingFallback) {
+        if (!scheduleFile.name.toLowerCase().endsWith('.csv')) {
+          setScheduleUploadError('Backend parsing is required for XLSX and PDF uploads. Start the backend and try again.');
+          return;
+        }
+        result = await parseScheduleCsvFallback(scheduleFile);
+      } else {
+        const formData = new FormData();
+        formData.append('file', scheduleFile);
+        const res = await fetch(`${API_BASE}/loans/upload-schedule`, {
+          method: 'POST',
+          body: formData
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          setScheduleUploadError(data.error || 'Could not parse repayment schedule.');
+          return;
+        }
+        result = data;
+      }
+
+      setScheduleUploadResult(result);
+      applyDetectedScheduleLoan(result);
+      if (result.missingFields.length > 0) {
+        setScheduleUploadError(`File does not contain the following fields, please add manually: ${result.missingFields.join(', ')}`);
+      }
+    } finally {
+      setIsUploadingSchedule(false);
+    }
+  };
+
+  const handleCreateLoanFromSchedule = async () => {
+    if (!scheduleUploadResult || scheduleUploadResult.payments.length === 0) return;
+    if (!scheduleUploadForm.name || !scheduleUploadForm.principal || !scheduleUploadForm.emi || !scheduleUploadForm.lender || !scheduleUploadForm.type) {
+      setScheduleUploadError('File does not contain the following fields, please add manually: name, principal, emi, lender, type');
+      return;
+    }
+
+    const loan: Loan = {
+      id: Date.now(),
+      userId: 1,
+      name: scheduleUploadForm.name,
+      principal: parseFloat(scheduleUploadForm.principal),
+      rate: parseFloat(scheduleUploadForm.rate) || 0,
+      tenure: parseInt(scheduleUploadForm.tenure) || scheduleUploadResult.payments.length,
+      emi: parseFloat(scheduleUploadForm.emi),
+      startDate: scheduleUploadResult.payments[0].dueDate,
+      lender: scheduleUploadForm.lender,
+      type: scheduleUploadForm.type
+    };
+
+    if (isUsingFallback) {
+      const payments: EmiPayment[] = scheduleUploadResult.payments.map((payment, idx) => ({
+        id: Date.now() + 2000 + idx,
+        loanId: loan.id,
+        dueDate: payment.dueDate,
+        paidDate: payment.paidDate,
+        amount: payment.amount,
+        isPaid: payment.isPaid
+      }));
+      const updated = [...loansWithPayments, { loan, payments }];
+      setLoansWithPayments(updated);
+      localStorage.setItem('loans', JSON.stringify(updated));
+      calculateAiProjectionsLocal();
+    } else {
+      const res = await fetch(`${API_BASE}/loans/from-schedule`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ loan: { ...loan, id: undefined }, payments: scheduleUploadResult.payments })
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setScheduleUploadError(data.error || 'Could not create debt from schedule.');
+        return;
+      }
+      loadAllData();
+    }
+
+    setScheduleFile(null);
+    setScheduleUploadResult(null);
+    setScheduleUploadError('');
+    setScheduleUploadForm({ name: '', principal: '', rate: '0', tenure: '', emi: '', lender: '', type: 'Home' });
+  };
+
   const handleDeleteLoan = async (id: number) => {
     if (isUsingFallback) {
       const updated = loansWithPayments.filter(lw => lw.loan.id !== id);
@@ -870,6 +1189,45 @@ Be generous in interpretation. "joining bonus", "sign-on bonus", "relocation all
       await fetch(`${API_BASE}/loans/${id}`, { method: 'DELETE' });
       loadAllData();
     }
+  };
+
+  const handleUpdateLoan = async (loanId: number) => {
+    const payload = {
+      userId: 1,
+      name: editLoanForm.name,
+      principal: parseFloat(editLoanForm.principal) || 0,
+      rate: parseFloat(editLoanForm.rate) || 0,
+      tenure: parseInt(editLoanForm.tenure) || 0,
+      emi: parseFloat(editLoanForm.emi) || 0,
+      lender: editLoanForm.lender,
+      type: editLoanForm.type
+    };
+
+    if (isUsingFallback) {
+      const updated = loansWithPayments.map(lw => {
+        if (lw.loan.id === loanId) {
+          return {
+            ...lw,
+            loan: {
+              ...lw.loan,
+              ...payload
+            }
+          };
+        }
+        return lw;
+      });
+      setLoansWithPayments(updated);
+      localStorage.setItem('loans', JSON.stringify(updated));
+      calculateAiProjectionsLocal();
+    } else {
+      await fetch(`${API_BASE}/loans/${loanId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      loadAllData();
+    }
+    setEditingLoanId(null);
   };
 
   const handleAddIncome = async (e: React.FormEvent) => {
@@ -1001,12 +1359,50 @@ Be generous in interpretation. "joining bonus", "sign-on bonus", "relocation all
   const totalIncome = incomes.reduce((sum, item) => sum + item.amount, 0);
   const totalExpenses = expenses.reduce((sum, item) => sum + item.amount, 0);
   const totalDebt = loansWithPayments.reduce((sum, item) => {
-    const paidCount = item.payments.filter(p => p.isPaid).length;
-    return sum + (item.loan.principal - (paidCount * item.loan.emi));
+    return sum + item.payments.filter(p => !p.isPaid).reduce((s, p) => s + p.amount, 0);
   }, 0);
 
   const totalEMI = loansWithPayments.reduce((sum, item) => sum + item.loan.emi, 0);
   const netWorth = totalIncome - totalExpenses - totalDebt;
+
+  const getMergedProjections = () => {
+    if (!aiAnalysis) return [];
+    interface MergedPoint {
+      month: string;
+      Baseline: number;
+      Avalanche: number;
+      Snowball: number;
+      Balanced: number;
+    }
+    const merged: MergedPoint[] = [];
+    const maxMonths = Math.max(
+      aiAnalysis.baseline?.projection?.length || 0,
+      aiAnalysis.avalanche?.projection?.length || 0,
+      aiAnalysis.snowball?.projection?.length || 0,
+      aiAnalysis.balanced?.projection?.length || 0
+    );
+
+    const today = new Date();
+    for (let i = 0; i < maxMonths; i++) {
+      const currentMonthDate = new Date(today.getFullYear(), today.getMonth() + i, 1);
+      const monthLabel = currentMonthDate.toLocaleDateString('en-US', { month: 'short', year: 'numeric' });
+
+      const getBalanceAtIndex = (proj: ProjectionPoint[] | undefined, index: number) => {
+        if (!proj || proj.length === 0) return 0;
+        if (index >= proj.length) return 0;
+        return proj[index].balance;
+      };
+
+      merged.push({
+        month: monthLabel,
+        'Baseline': getBalanceAtIndex(aiAnalysis.baseline?.projection, i),
+        'Avalanche': getBalanceAtIndex(aiAnalysis.avalanche?.projection, i),
+        'Snowball': getBalanceAtIndex(aiAnalysis.snowball?.projection, i),
+        'Balanced': getBalanceAtIndex(aiAnalysis.balanced?.projection, i),
+      });
+    }
+    return merged;
+  };
 
   // Render Onboarding Wizard
   if (!isOnboarded) {
@@ -1617,32 +2013,169 @@ Be generous in interpretation. "joining bonus", "sign-on bonus", "relocation all
               <div className="premium-card">
                 <h3>Add New Active Debt 🏦</h3>
                 
-                {/* Toggle Simple Payoff */}
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem', background: 'rgba(255,255,255,0.02)', padding: '0.6rem 1rem', borderRadius: '12px', border: '1px solid rgba(255,255,255,0.05)' }}>
-                  <span style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>Simple Payoff Mode (Just EMI & Tenure)</span>
-                  <label className="emi-checkbox-container" style={{ gap: '0.5rem' }}>
-                    <input 
-                      type="checkbox" 
-                      className="emi-checkbox-input"
-                      checked={isSimpleLoan}
-                      onChange={(e) => setIsSimpleLoan(e.target.checked)}
-                    />
-                    <span className="emi-checkbox-custom" style={{ borderRadius: '50%' }}>
-                      {isSimpleLoan ? '✓' : ''}
-                    </span>
-                  </label>
+                {/* Premium Mode Selector Segment Control */}
+                <div style={{ 
+                  display: 'flex', 
+                  background: 'rgba(255,255,255,0.03)', 
+                  padding: '0.3rem', 
+                  borderRadius: '12px', 
+                  border: '1px solid rgba(255,255,255,0.06)',
+                  marginBottom: '1.25rem' 
+                }}>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setLoanRegistrationMode('standard');
+                      setIsSimpleLoan(false);
+                    }}
+                    style={{
+                      flex: 1,
+                      padding: '0.5rem',
+                      borderRadius: '8px',
+                      border: 'none',
+                      background: loanRegistrationMode === 'standard' ? 'var(--primary)' : 'transparent',
+                      color: 'white',
+                      fontSize: '0.8rem',
+                      fontWeight: 600,
+                      cursor: 'pointer',
+                      transition: 'var(--transition-smooth)'
+                    }}
+                  >
+                    📈 Standard
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setLoanRegistrationMode('simple');
+                      setIsSimpleLoan(true);
+                    }}
+                    style={{
+                      flex: 1,
+                      padding: '0.5rem',
+                      borderRadius: '8px',
+                      border: 'none',
+                      background: loanRegistrationMode === 'simple' ? 'var(--primary)' : 'transparent',
+                      color: 'white',
+                      fontSize: '0.8rem',
+                      fontWeight: 600,
+                      cursor: 'pointer',
+                      transition: 'var(--transition-smooth)'
+                    }}
+                  >
+                    ⚙️ Simple
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setLoanRegistrationMode('slice');
+                      setIsSimpleLoan(false);
+                    }}
+                    style={{
+                      flex: 1,
+                      padding: '0.5rem',
+                      borderRadius: '8px',
+                      border: 'none',
+                      background: loanRegistrationMode === 'slice' ? 'var(--primary)' : 'transparent',
+                      color: 'white',
+                      fontSize: '0.8rem',
+                      fontWeight: 600,
+                      cursor: 'pointer',
+                      transition: 'var(--transition-smooth)'
+                    }}
+                  >
+                    💳 Slice/Custom
+                  </button>
                 </div>
 
-                <form onSubmit={handleAddLoan} style={{ display: 'flex', flexDirection: 'column', gap: '1rem', marginTop: '1rem' }}>
+                <form onSubmit={handleAddLoan} style={{ display: 'flex', flexDirection: 'column', gap: '1rem', marginTop: '0.5rem' }}>
                   <input 
                     type="text" 
-                    placeholder="Loan Name (e.g. Home Loan SBI)" 
+                    placeholder="Loan Name (e.g. Slice Purchase, iPhone Split)" 
                     value={newLoan.name}
                     onChange={(e) => setNewLoan({ ...newLoan, name: e.target.value })}
                     required
                   />
                   
-                  {isSimpleLoan ? (
+                  {loanRegistrationMode === 'slice' ? (
+                    <>
+                      <div style={{ display: 'flex', gap: '1rem' }}>
+                        <div style={{ width: '50%', display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
+                          <label style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>Start Month</label>
+                          <input 
+                            type="month" 
+                            value={sliceStartMonth}
+                            onChange={(e) => setSliceStartMonth(e.target.value)}
+                            required
+                          />
+                        </div>
+                        <div style={{ width: '50%', display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
+                          <label style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>Tenure (months)</label>
+                          <input 
+                            type="number" 
+                            placeholder="e.g. 11" 
+                            value={sliceTenure}
+                            onChange={(e) => setSliceTenure(e.target.value)}
+                            min="1"
+                            required
+                          />
+                        </div>
+                      </div>
+
+                      {getSliceMonths(sliceStartMonth, parseInt(sliceTenure) || 0).length > 0 && (
+                        <div style={{ 
+                          display: 'flex', 
+                          flexDirection: 'column', 
+                          gap: '0.75rem', 
+                          maxHeight: '220px', 
+                          overflowY: 'auto', 
+                          padding: '0.75rem', 
+                          background: 'rgba(255,255,255,0.02)', 
+                          borderRadius: '12px', 
+                          border: '1px solid rgba(255,255,255,0.05)',
+                          marginTop: '0.5rem'
+                        }}>
+                          <label style={{ fontSize: '0.8rem', color: 'var(--text-muted)', fontWeight: 600 }}>
+                            Enter payment for each month:
+                          </label>
+                          {getSliceMonths(sliceStartMonth, parseInt(sliceTenure) || 0).map(m => (
+                            <div key={m.dateStr} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '1rem' }}>
+                              <span style={{ fontSize: '0.82rem', color: 'var(--text-main)' }}>{m.label}</span>
+                              <input
+                                type="number"
+                                placeholder="Amount (₹)"
+                                value={sliceAmounts[m.dateStr] || ''}
+                                onChange={(e) => {
+                                  setSliceAmounts({ ...sliceAmounts, [m.dateStr]: e.target.value });
+                                }}
+                                style={{ width: '130px', padding: '0.4rem 0.75rem', borderRadius: '8px' }}
+                                min="1"
+                                required
+                              />
+                            </div>
+                          ))}
+                        </div>
+                      )}
+
+                      {getSliceMonths(sliceStartMonth, parseInt(sliceTenure) || 0).reduce((sum, m) => sum + (parseFloat(sliceAmounts[m.dateStr]) || 0), 0) > 0 && (
+                        <div style={{ fontSize: '0.85rem', color: '#10b981', fontWeight: 700, padding: '0.25rem 0' }}>
+                          💰 Total Sliced Debt Principal: ₹{getSliceMonths(sliceStartMonth, parseInt(sliceTenure) || 0).reduce((sum, m) => sum + (parseFloat(sliceAmounts[m.dateStr]) || 0), 0).toLocaleString()}
+                        </div>
+                      )}
+
+                      <div style={{ display: 'flex', gap: '1rem' }}>
+                        <select 
+                          value={newLoan.type}
+                          onChange={(e) => setNewLoan({ ...newLoan, type: e.target.value })}
+                          style={{ width: '100%' }}
+                        >
+                          <option value="Home">🏠 Home Loan</option>
+                          <option value="Car">🚗 Car Loan</option>
+                          <option value="Personal">💳 Personal Loan</option>
+                          <option value="Friend">🤝 Friend/Other</option>
+                        </select>
+                      </div>
+                    </>
+                  ) : loanRegistrationMode === 'simple' ? (
                     <div style={{ display: 'flex', gap: '1rem' }}>
                       <input 
                         type="number" 
@@ -1662,48 +2195,62 @@ Be generous in interpretation. "joining bonus", "sign-on bonus", "relocation all
                       />
                     </div>
                   ) : (
-                    <div style={{ display: 'flex', gap: '1rem' }}>
-                      <input 
-                        type="number" 
-                        placeholder="Principal Amount (₹)" 
-                        value={newLoan.principal}
-                        onChange={(e) => setNewLoan({ ...newLoan, principal: e.target.value })}
-                        style={{ width: '50%' }}
-                        required
-                      />
-                      <input 
-                        type="number" 
-                        placeholder="Interest Rate p.a. (%)" 
-                        value={newLoan.rate}
-                        onChange={(e) => setNewLoan({ ...newLoan, rate: e.target.value })}
-                        style={{ width: '50%' }}
-                        required
-                      />
-                    </div>
+                    <>
+                      <div style={{ display: 'flex', gap: '1rem' }}>
+                        <input 
+                          type="number" 
+                          placeholder="Principal Amount (₹)" 
+                          value={newLoan.principal}
+                          onChange={(e) => setNewLoan({ ...newLoan, principal: e.target.value })}
+                          style={{ width: '50%' }}
+                          required
+                        />
+                        <input 
+                          type="number" 
+                          placeholder="Interest Rate p.a. (%)" 
+                          value={newLoan.rate}
+                          onChange={(e) => setNewLoan({ ...newLoan, rate: e.target.value })}
+                          style={{ width: '50%' }}
+                          required
+                        />
+                      </div>
+                      <div style={{ display: 'flex', gap: '1rem' }}>
+                        <input 
+                          type="number" 
+                          placeholder="Tenure (months)" 
+                          value={newLoan.tenure}
+                          onChange={(e) => setNewLoan({ ...newLoan, tenure: e.target.value })}
+                          style={{ width: '50%' }}
+                          required
+                        />
+                        <select 
+                          value={newLoan.type}
+                          onChange={(e) => setNewLoan({ ...newLoan, type: e.target.value })}
+                          style={{ width: '50%' }}
+                        >
+                          <option value="Home">🏠 Home Loan</option>
+                          <option value="Car">🚗 Car Loan</option>
+                          <option value="Personal">💳 Personal Loan</option>
+                          <option value="Friend">🤝 Friend/Other</option>
+                        </select>
+                      </div>
+                    </>
                   )}
 
-                  <div style={{ display: 'flex', gap: '1rem' }}>
-                    {!isSimpleLoan && (
-                      <input 
-                        type="number" 
-                        placeholder="Tenure (months)" 
-                        value={newLoan.tenure}
-                        onChange={(e) => setNewLoan({ ...newLoan, tenure: e.target.value })}
-                        style={{ width: '50%' }}
-                        required
-                      />
-                    )}
-                    <select 
-                      value={newLoan.type}
-                      onChange={(e) => setNewLoan({ ...newLoan, type: e.target.value })}
-                      style={{ width: isSimpleLoan ? '100%' : '50%' }}
-                    >
-                      <option value="Home">🏠 Home Loan</option>
-                      <option value="Car">🚗 Car Loan</option>
-                      <option value="Personal">💳 Personal Loan</option>
-                      <option value="Friend">🤝 Friend/Other</option>
-                    </select>
-                  </div>
+                  {loanRegistrationMode !== 'slice' && (
+                    <div style={{ display: 'flex', gap: '1rem' }}>
+                      <select 
+                        value={newLoan.type}
+                        onChange={(e) => setNewLoan({ ...newLoan, type: e.target.value })}
+                        style={{ width: '100%', display: loanRegistrationMode === 'simple' ? 'block' : 'none' }}
+                      >
+                        <option value="Home">🏠 Home Loan</option>
+                        <option value="Car">🚗 Car Loan</option>
+                        <option value="Personal">💳 Personal Loan</option>
+                        <option value="Friend">🤝 Friend/Other</option>
+                      </select>
+                    </div>
+                  )}
                   
                   <input 
                     type="text" 
@@ -1716,6 +2263,108 @@ Be generous in interpretation. "joining bonus", "sign-on bonus", "relocation all
                     Register Loan Schedule
                   </button>
                 </form>
+
+                <div style={{ marginTop: '1.5rem', paddingTop: '1.25rem', borderTop: '1px solid rgba(255,255,255,0.08)', display: 'flex', flexDirection: 'column', gap: '0.85rem' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontWeight: 700 }}>
+                    <Upload size={16} style={{ color: 'var(--primary)' }} />
+                    Upload repayment schedule
+                  </div>
+                  <p style={{ margin: 0, fontSize: '0.8rem', color: 'var(--text-muted)' }}>
+                    Supports CSV, XLSX, and PDF schedules. Columns are auto-detected from the file.
+                  </p>
+                  <input
+                    type="file"
+                    accept=".csv,.xlsx,.pdf"
+                    onChange={(e) => {
+                      setScheduleFile(e.target.files?.[0] || null);
+                      setScheduleUploadError('');
+                      setScheduleUploadResult(null);
+                    }}
+                  />
+                  <button
+                    type="button"
+                    className="btn btn-secondary"
+                    onClick={handleUploadRepaymentSchedule}
+                    disabled={isUploadingSchedule || !scheduleFile}
+                    style={{ width: '100%' }}
+                  >
+                    {isUploadingSchedule ? 'Reading schedule...' : 'Read Schedule File'}
+                  </button>
+
+                  {scheduleUploadError && (
+                    <div style={{ fontSize: '0.8rem', color: 'var(--warning)', lineHeight: 1.5 }}>
+                      {scheduleUploadError}
+                    </div>
+                  )}
+
+                  {scheduleUploadResult && scheduleUploadResult.payments.length > 0 && (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', background: 'rgba(255,255,255,0.02)', padding: '1rem', borderRadius: '12px', border: '1px solid rgba(255,255,255,0.05)' }}>
+                      <div style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>
+                        Found {scheduleUploadResult.payments.length} installments from {scheduleUploadResult.payments[0].dueDate} to {scheduleUploadResult.payments[scheduleUploadResult.payments.length - 1].dueDate}.
+                      </div>
+                      {scheduleUploadResult.warnings.map((warning, idx) => (
+                        <div key={idx} style={{ fontSize: '0.78rem', color: 'var(--warning)' }}>{warning}</div>
+                      ))}
+
+                      <input
+                        type="text"
+                        placeholder="Loan name"
+                        value={scheduleUploadForm.name}
+                        onChange={(e) => setScheduleUploadForm({ ...scheduleUploadForm, name: e.target.value })}
+                      />
+                      <div style={{ display: 'flex', gap: '0.75rem' }}>
+                        <input
+                          type="number"
+                          placeholder="Principal"
+                          value={scheduleUploadForm.principal}
+                          onChange={(e) => setScheduleUploadForm({ ...scheduleUploadForm, principal: e.target.value })}
+                          style={{ width: '50%' }}
+                        />
+                        <input
+                          type="number"
+                          placeholder="Interest rate"
+                          value={scheduleUploadForm.rate}
+                          onChange={(e) => setScheduleUploadForm({ ...scheduleUploadForm, rate: e.target.value })}
+                          style={{ width: '50%' }}
+                        />
+                      </div>
+                      <div style={{ display: 'flex', gap: '0.75rem' }}>
+                        <input
+                          type="number"
+                          placeholder="EMI"
+                          value={scheduleUploadForm.emi}
+                          onChange={(e) => setScheduleUploadForm({ ...scheduleUploadForm, emi: e.target.value })}
+                          style={{ width: '50%' }}
+                        />
+                        <input
+                          type="number"
+                          placeholder="Tenure"
+                          value={scheduleUploadForm.tenure}
+                          onChange={(e) => setScheduleUploadForm({ ...scheduleUploadForm, tenure: e.target.value })}
+                          style={{ width: '50%' }}
+                        />
+                      </div>
+                      <input
+                        type="text"
+                        placeholder="Lender / Bank name"
+                        value={scheduleUploadForm.lender}
+                        onChange={(e) => setScheduleUploadForm({ ...scheduleUploadForm, lender: e.target.value })}
+                      />
+                      <select
+                        value={scheduleUploadForm.type}
+                        onChange={(e) => setScheduleUploadForm({ ...scheduleUploadForm, type: e.target.value })}
+                      >
+                        <option value="Home">Home Loan</option>
+                        <option value="Car">Car Loan</option>
+                        <option value="Personal">Personal Loan</option>
+                        <option value="Friend">Friend/Other</option>
+                      </select>
+                      <button type="button" className="btn btn-primary" onClick={handleCreateLoanFromSchedule}>
+                        Create Debt From Uploaded Schedule
+                      </button>
+                    </div>
+                  )}
+                </div>
               </div>
 
               {/* Loans List and EMI checklist */}
@@ -1726,40 +2375,185 @@ Be generous in interpretation. "joining bonus", "sign-on bonus", "relocation all
                     const paidCount = lw.payments.filter(p => p.isPaid).length;
                     const totalCount = lw.payments.length;
                     const pct = Math.round((paidCount / totalCount) * 100) || 0;
-                    const remainingBalance = lw.loan.principal - (paidCount * lw.loan.emi);
+                    
+                    const remainingBalance = lw.payments.filter(p => !p.isPaid).reduce((sum, p) => sum + p.amount, 0);
+                    
+                    const isEditing = editingLoanId === lw.loan.id;
                     
                     return (
-                      <div key={lw.loan.id} style={{ border: '1px solid var(--border-color)', borderRadius: '16px', padding: '1.25rem', background: 'rgba(255,255,255,0.01)' }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.85rem' }}>
-                          <div>
-                            <h4 style={{ margin: 0, fontSize: '1.15rem' }}>{lw.loan.name}</h4>
-                            <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>Lender: {lw.loan.lender} • Type: {lw.loan.type}</span>
-                          </div>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
-                            <div style={{ textAlign: 'right' }}>
-                              <div style={{ fontWeight: 700 }}>{userProfile.currency}{remainingBalance.toLocaleString()} left</div>
-                              <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>EMI: {userProfile.currency}{lw.loan.emi.toLocaleString()}</div>
+                      <div key={lw.loan.id} style={{ 
+                        border: isEditing ? '1px solid var(--primary)' : '1px solid var(--border-color)', 
+                        borderRadius: '16px', 
+                        padding: '1.25rem', 
+                        background: isEditing ? 'rgba(168,85,247,0.03)' : 'rgba(255,255,255,0.01)',
+                        boxShadow: isEditing ? '0 0 15px rgba(168,85,247,0.1)' : 'none'
+                      }}>
+                        {isEditing ? (
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.85rem' }}>
+                            <div style={{ display: 'flex', gap: '0.75rem' }}>
+                              <input
+                                type="text"
+                                placeholder="Loan Name"
+                                value={editLoanForm.name}
+                                onChange={(e) => setEditLoanForm({ ...editLoanForm, name: e.target.value })}
+                                style={{ width: '50%', padding: '0.4rem 0.75rem' }}
+                                required
+                              />
+                              <input
+                                type="text"
+                                placeholder="Lender"
+                                value={editLoanForm.lender}
+                                onChange={(e) => setEditLoanForm({ ...editLoanForm, lender: e.target.value })}
+                                style={{ width: '50%', padding: '0.4rem 0.75rem' }}
+                                required
+                              />
                             </div>
-                            <button 
-                              className="btn btn-secondary" 
-                              style={{ padding: '0.35rem 0.6rem', color: 'var(--danger)', borderColor: 'rgba(239, 68, 68, 0.2)' }}
-                              onClick={() => handleDeleteLoan(lw.loan.id)}
-                            >
-                              Delete
-                            </button>
-                          </div>
-                        </div>
+                            
+                            <div style={{ display: 'flex', gap: '0.75rem' }}>
+                              <div style={{ width: '33%', display: 'flex', flexDirection: 'column', gap: '0.2rem' }}>
+                                <label style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Amount Borrowed (Principal)</label>
+                                <input
+                                  type="number"
+                                  placeholder="Principal"
+                                  value={editLoanForm.principal}
+                                  onChange={(e) => setEditLoanForm({ ...editLoanForm, principal: e.target.value })}
+                                  style={{ width: '100%', padding: '0.4rem 0.75rem' }}
+                                  required
+                                />
+                              </div>
+                              <div style={{ width: '33%', display: 'flex', flexDirection: 'column', gap: '0.2rem' }}>
+                                <label style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Interest Rate (%)</label>
+                                <input
+                                  type="number"
+                                  placeholder="Rate"
+                                  value={editLoanForm.rate}
+                                  onChange={(e) => setEditLoanForm({ ...editLoanForm, rate: e.target.value })}
+                                  style={{ width: '100%', padding: '0.4rem 0.75rem' }}
+                                  required
+                                />
+                              </div>
+                              <div style={{ width: '34%', display: 'flex', flexDirection: 'column', gap: '0.2rem' }}>
+                                <label style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>EMI (₹)</label>
+                                <input
+                                  type="number"
+                                  placeholder="EMI"
+                                  value={editLoanForm.emi}
+                                  onChange={(e) => setEditLoanForm({ ...editLoanForm, emi: e.target.value })}
+                                  style={{ width: '100%', padding: '0.4rem 0.75rem' }}
+                                  required
+                                />
+                              </div>
+                            </div>
 
-                        {/* Progress Bar */}
-                        <div style={{ marginBottom: '1rem' }}>
-                          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: '0.35rem' }}>
-                            <span>EMI progress: {paidCount}/{totalCount} payments ticked</span>
-                            <span>{pct}% Paid</span>
+                            <div style={{ display: 'flex', gap: '0.75rem' }}>
+                              <div style={{ width: '50%', display: 'flex', flexDirection: 'column', gap: '0.2rem' }}>
+                                <label style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Tenure (months)</label>
+                                <input
+                                  type="number"
+                                  placeholder="Tenure"
+                                  value={editLoanForm.tenure}
+                                  onChange={(e) => setEditLoanForm({ ...editLoanForm, tenure: e.target.value })}
+                                  style={{ width: '100%', padding: '0.4rem 0.75rem' }}
+                                  required
+                                />
+                              </div>
+                              <div style={{ width: '50%', display: 'flex', flexDirection: 'column', gap: '0.2rem' }}>
+                                <label style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Loan Category</label>
+                                <select
+                                  value={editLoanForm.type}
+                                  onChange={(e) => setEditLoanForm({ ...editLoanForm, type: e.target.value })}
+                                  style={{ width: '100%', padding: '0.4rem' }}
+                                >
+                                  <option value="Home">🏠 Home Loan</option>
+                                  <option value="Car">🚗 Car Loan</option>
+                                  <option value="Personal">💳 Personal Loan</option>
+                                  <option value="Friend">🤝 Friend/Other</option>
+                                </select>
+                              </div>
+                            </div>
+
+                            <div style={{ display: 'flex', gap: '0.75rem', marginTop: '0.5rem' }}>
+                              <button
+                                className="btn btn-primary"
+                                style={{ padding: '0.4rem 1rem', fontSize: '0.85rem' }}
+                                onClick={() => handleUpdateLoan(lw.loan.id)}
+                              >
+                                Save Changes
+                              </button>
+                              <button
+                                className="btn btn-secondary"
+                                style={{ padding: '0.4rem 1rem', fontSize: '0.85rem' }}
+                                onClick={() => setEditingLoanId(null)}
+                              >
+                                Cancel
+                              </button>
+                            </div>
                           </div>
-                          <div style={{ width: '100%', height: '8px', background: 'rgba(255,255,255,0.05)', borderRadius: '4px', overflow: 'hidden' }}>
-                            <div style={{ height: '100%', width: `${pct}%`, background: 'linear-gradient(90deg, var(--success), #059669)', borderRadius: '4px' }}></div>
-                          </div>
-                        </div>
+                        ) : (
+                          <>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.85rem' }}>
+                              <div>
+                                <h4 style={{ margin: 0, fontSize: '1.15rem' }}>{lw.loan.name}</h4>
+                                <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', display: 'flex', flexDirection: 'column', gap: '0.25rem', marginTop: '0.35rem' }}>
+                                  <span>Lender: {lw.loan.lender} • Type: {lw.loan.type}</span>
+                                  <span style={{ color: 'var(--text-main)', fontWeight: 600 }}>💰 Amount Borrowed: {userProfile.currency}{lw.loan.principal.toLocaleString()}</span>
+                                  {lw.loan.rate > 0 && (
+                                    <span style={{ color: 'var(--warning)', fontWeight: 500 }}>📈 Interest Rate: {lw.loan.rate}% p.a.</span>
+                                  )}
+                                  {lw.loan.rate > 0 && lw.loan.emi > 0 && (
+                                    <span style={{ color: 'var(--text-dimmed)' }}>
+                                      Scheduled Total Interest Cost: {userProfile.currency}{Math.max(0, Math.round((lw.loan.emi * lw.loan.tenure) - lw.loan.principal)).toLocaleString()}
+                                    </span>
+                                  )}
+                                </div>
+                              </div>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+                                <div style={{ textAlign: 'right' }}>
+                                  <div style={{ fontWeight: 700, color: 'var(--success)' }}>{userProfile.currency}{remainingBalance.toLocaleString()} left</div>
+                                  <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>EMI: {userProfile.currency}{lw.loan.emi.toLocaleString()}</div>
+                                </div>
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
+                                  <button 
+                                    className="btn btn-secondary" 
+                                    style={{ padding: '0.3rem 0.6rem', fontSize: '0.78rem', borderColor: 'var(--primary)' }}
+                                    onClick={() => {
+                                      setEditingLoanId(lw.loan.id);
+                                      setEditLoanForm({
+                                        name: lw.loan.name,
+                                        principal: String(lw.loan.principal),
+                                        rate: String(lw.loan.rate),
+                                        tenure: String(lw.loan.tenure),
+                                        emi: String(lw.loan.emi),
+                                        lender: lw.loan.lender,
+                                        type: lw.loan.type
+                                      });
+                                    }}
+                                  >
+                                    Edit Details
+                                  </button>
+                                  <button 
+                                    className="btn btn-secondary" 
+                                    style={{ padding: '0.3rem 0.6rem', fontSize: '0.78rem', color: 'var(--danger)', borderColor: 'rgba(239, 68, 68, 0.2)' }}
+                                    onClick={() => handleDeleteLoan(lw.loan.id)}
+                                  >
+                                    Delete
+                                  </button>
+                                </div>
+                              </div>
+                            </div>
+
+                            {/* Progress Bar */}
+                            <div style={{ marginBottom: '1rem' }}>
+                              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: '0.35rem' }}>
+                                <span>EMI progress: {paidCount}/{totalCount} payments ticked</span>
+                                <span>{pct}% Paid</span>
+                              </div>
+                              <div style={{ width: '100%', height: '8px', background: 'rgba(255,255,255,0.05)', borderRadius: '4px', overflow: 'hidden' }}>
+                                <div style={{ height: '100%', width: `${pct}%`, background: 'linear-gradient(90deg, var(--success), #059669)', borderRadius: '4px' }}></div>
+                              </div>
+                            </div>
+                          </>
+                        )}
 
                         {/* Amortization EMI grids for tick off */}
                         <div>
@@ -1786,10 +2580,17 @@ Be generous in interpretation. "joining bonus", "sign-on bonus", "relocation all
                           {/* Variable EMI Upcoming adjustments */}
                           <div style={{ background: 'rgba(255,255,255,0.02)', padding: '1rem', borderRadius: '12px', border: '1px solid rgba(255,255,255,0.04)' }}>
                             <span style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--primary)', display: 'flex', alignItems: 'center', gap: '0.35rem', marginBottom: '0.75rem' }}>
-                              <Sparkles size={14} /> Variable Installment Adjuster (Next 3 Months)
+                              <Sparkles size={14} /> Variable Installment Adjuster (All Months)
                             </span>
-                            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
-                              {lw.payments.filter(p => !p.isPaid).slice(0, 3).map((p) => {
+                            <div style={{ 
+                              display: 'flex', 
+                              flexDirection: 'column', 
+                              gap: '0.75rem',
+                              maxHeight: '260px',
+                              overflowY: 'auto',
+                              paddingRight: '0.5rem'
+                            }}>
+                              {lw.payments.filter(p => !p.isPaid).map((p) => {
                                 const idx = lw.payments.findIndex(item => item.id === p.id);
                                 return (
                                   <div key={p.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.85rem' }}>
@@ -1842,10 +2643,34 @@ Be generous in interpretation. "joining bonus", "sign-on bonus", "relocation all
         {activeTab === 'planner' && (
           <div>
             <div className="premium-card glow-card" style={{ marginBottom: '2rem', borderLeftWidth: '5px', borderLeftColor: 'var(--primary)' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '0.5rem' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '0.5rem', flexWrap: 'wrap' }}>
                 <Sparkles size={20} style={{ color: 'var(--primary)' }} />
                 <h3 style={{ margin: 0 }}>Smart Payoff Context Simulator</h3>
                 {!aiKey && <span style={{ fontSize: '0.72rem', background: 'rgba(245,158,11,0.12)', color: '#fbbf24', padding: '0.2rem 0.6rem', borderRadius: '8px', marginLeft: '0.5rem' }}>Add Claude API key in Settings for smarter AI parsing</span>}
+                <button
+                  onClick={handleRefreshData}
+                  disabled={isRefreshingData}
+                  className="btn btn-secondary"
+                  style={{
+                    marginLeft: 'auto',
+                    padding: '0.4rem 1rem',
+                    fontSize: '0.85rem',
+                    borderRadius: '10px',
+                    borderColor: 'var(--border-color)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '0.5rem',
+                  }}
+                  title="Reload income, expenses, and loans from database to simulate fresh data"
+                >
+                  <RotateCcw 
+                    size={14} 
+                    style={{ 
+                      animation: isRefreshingData ? 'spin 1s linear infinite' : 'none' 
+                    }} 
+                  />
+                  {isRefreshingData ? 'Refreshing...' : 'Refresh Data'}
+                </button>
               </div>
               <p style={{ color: 'var(--text-muted)', margin: 0, fontSize: '0.9rem' }}>
                 Describe any future financial event in plain English — job switch, bonus, extra payment, salary hike, FD maturity, etc. The AI will extract and simulate it automatically.
@@ -2070,6 +2895,70 @@ Be generous in interpretation. "joining bonus", "sign-on bonus", "relocation all
                           {aiAnalysis.balanced.monthsSaved} Months Faster!
                         </div>
                       </div>
+                    </div>
+
+                    {/* Heuristic 0% Interest Warning Banner */}
+                    {aiAnalysis.baseline?.totalInterestPaid === 0 && (
+                      <div style={{
+                        padding: '1rem 1.25rem',
+                        background: 'rgba(99, 102, 241, 0.08)',
+                        border: '1px solid rgba(99, 102, 241, 0.25)',
+                        borderRadius: '12px',
+                        display: 'flex',
+                        alignItems: 'flex-start',
+                        gap: '0.75rem',
+                        fontSize: '0.88rem',
+                        lineHeight: '1.5',
+                        color: 'var(--text-main)',
+                      }}>
+                        <Info size={18} style={{ color: 'var(--secondary)', flexShrink: 0, marginTop: '0.1rem' }} />
+                        <div>
+                          <strong style={{ color: 'var(--secondary)' }}>💡 Zero-Interest Optimization Note:</strong> All of your active accounts currently have a <strong>0% interest rate</strong> (e.g. interest-free credit card EMIs, personal/friend loans). While prepayments won't save you interest expenses, allocating surplus cash to these accounts will make you completely <strong>debt-free {aiAnalysis.avalanche.monthsSaved} months faster</strong>!
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Payoff Curve Visualizer Chart */}
+                    <div style={{ height: '260px', marginTop: '0.5rem', marginBottom: '0.5rem' }}>
+                      <ResponsiveContainer width="100%" height="100%">
+                        <AreaChart data={getMergedProjections()}>
+                          <defs>
+                            <linearGradient id="colorBaselinePlanner" x1="0" y1="0" x2="0" y2="1">
+                              <stop offset="5%" stopColor="var(--accent)" stopOpacity={0.15}/>
+                              <stop offset="95%" stopColor="var(--accent)" stopOpacity={0}/>
+                            </linearGradient>
+                            <linearGradient id="colorAvalanchePlanner" x1="0" y1="0" x2="0" y2="1">
+                              <stop offset="5%" stopColor="var(--primary)" stopOpacity={0.25}/>
+                              <stop offset="95%" stopColor="var(--primary)" stopOpacity={0}/>
+                            </linearGradient>
+                            <linearGradient id="colorSnowballPlanner" x1="0" y1="0" x2="0" y2="1">
+                              <stop offset="5%" stopColor="var(--secondary)" stopOpacity={0.2}/>
+                              <stop offset="95%" stopColor="var(--secondary)" stopOpacity={0}/>
+                            </linearGradient>
+                            <linearGradient id="colorBalancedPlanner" x1="0" y1="0" x2="0" y2="1">
+                              <stop offset="5%" stopColor="var(--success)" stopOpacity={0.2}/>
+                              <stop offset="95%" stopColor="var(--success)" stopOpacity={0}/>
+                            </linearGradient>
+                          </defs>
+                          <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
+                          <XAxis dataKey="month" stroke="var(--text-dimmed)" fontSize={10} />
+                          <YAxis stroke="var(--text-dimmed)" fontSize={10} tickFormatter={(v) => `₹${(v/1000)}k`} />
+                          <Tooltip 
+                            contentStyle={{ 
+                              background: 'rgba(15,10,25,0.95)', 
+                              borderColor: 'var(--border-color)', 
+                              color: 'white',
+                              borderRadius: '8px'
+                            }} 
+                            formatter={(value: number | string) => [`₹${Number(value).toLocaleString()}`, '']}
+                          />
+                          <Legend wrapperStyle={{ fontSize: '11px', paddingTop: '10px' }} />
+                          <Area name="Baseline (Minimums)" type="monotone" dataKey="Baseline" stroke="var(--accent)" strokeWidth={2} fillOpacity={1} fill="url(#colorBaselinePlanner)" />
+                          <Area name="Avalanche Strategy" type="monotone" dataKey="Avalanche" stroke="var(--primary)" strokeWidth={2.5} fillOpacity={1} fill="url(#colorAvalanchePlanner)" />
+                          <Area name="Snowball Strategy" type="monotone" dataKey="Snowball" stroke="var(--secondary)" strokeWidth={2} fillOpacity={1} fill="url(#colorSnowballPlanner)" />
+                          <Area name="Balanced Strategy" type="monotone" dataKey="Balanced" stroke="var(--success)" strokeWidth={2} fillOpacity={1} fill="url(#colorBalancedPlanner)" />
+                        </AreaChart>
+                      </ResponsiveContainer>
                     </div>
 
                     {/* AI Advice */}

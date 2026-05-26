@@ -27,6 +27,9 @@ public class AiController {
     @Autowired
     private AiContextRepository aiContextRepository;
 
+    @Autowired
+    private EmiPaymentRepository emiPaymentRepository;
+
     // Request payload structures
     public static class SimulationRequest {
         private Long userId;
@@ -179,7 +182,17 @@ public class AiController {
         }
         
         double totalEmi = loans.stream().mapToDouble(Loan::getEmi).sum();
-        double totalDebt = loans.stream().mapToDouble(Loan::getPrincipal).sum();
+        
+        Map<Long, Double> currentBalances = new HashMap<>();
+        double totalDebt = 0.0;
+        for (Loan loan : loans) {
+            double remaining = emiPaymentRepository.findByLoanId(loan.getId()).stream()
+                    .filter(p -> !Boolean.TRUE.equals(p.getIsPaid()))
+                    .mapToDouble(EmiPayment::getAmount)
+                    .sum();
+            currentBalances.put(loan.getId(), remaining);
+            totalDebt += remaining;
+        }
         
         // Available surplus cash for prepayment
         double surplus = Math.max(0.0, totalIncome - totalExpenses - totalEmi);
@@ -304,10 +317,10 @@ public class AiController {
         double activeExtraCash = surplus + simExtraMonthly;
 
         // 3. Compute payoff schedules
-        StrategyResult baselineRes = simulateDebtStrategy(loans, "Baseline", 0.0, 0.0, 0, 0.0, 0);
-        StrategyResult avalancheRes = simulateDebtStrategy(loans, "Avalanche", activeExtraCash, simLumpSum, simLumpSumOffset, simHikeAmt, parsedSalaryHikeMonthOffset);
-        StrategyResult snowballRes = simulateDebtStrategy(loans, "Snowball", activeExtraCash, simLumpSum, simLumpSumOffset, simHikeAmt, parsedSalaryHikeMonthOffset);
-        StrategyResult balancedRes = simulateDebtStrategy(loans, "Balanced", activeExtraCash, simLumpSum, simLumpSumOffset, simHikeAmt, parsedSalaryHikeMonthOffset);
+        StrategyResult baselineRes = simulateDebtStrategy(loans, currentBalances, "Baseline", 0.0, 0.0, 0, 0.0, 0);
+        StrategyResult avalancheRes = simulateDebtStrategy(loans, currentBalances, "Avalanche", activeExtraCash, simLumpSum, simLumpSumOffset, simHikeAmt, parsedSalaryHikeMonthOffset);
+        StrategyResult snowballRes = simulateDebtStrategy(loans, currentBalances, "Snowball", activeExtraCash, simLumpSum, simLumpSumOffset, simHikeAmt, parsedSalaryHikeMonthOffset);
+        StrategyResult balancedRes = simulateDebtStrategy(loans, currentBalances, "Balanced", activeExtraCash, simLumpSum, simLumpSumOffset, simHikeAmt, parsedSalaryHikeMonthOffset);
 
         // Adjust comparisons relative to Baseline
         double avIntSaved = Math.max(0.0, baselineRes.getTotalInterestPaid() - avalancheRes.getTotalInterestPaid());
@@ -371,7 +384,7 @@ public class AiController {
     }
 
     // Standard high-performance Amortization simulator
-    private StrategyResult simulateDebtStrategy(List<Loan> baseLoans, String strategy, double monthlySurplus, double lumpSum, int lumpSumOffset, double salaryHike, int hikeOffset) {
+    private StrategyResult simulateDebtStrategy(List<Loan> baseLoans, Map<Long, Double> loanBalances, String strategy, double monthlySurplus, double lumpSum, int lumpSumOffset, double salaryHike, int hikeOffset) {
         if (baseLoans.isEmpty()) {
             return new StrategyResult(strategy, 0, "No active debt", 0.0, 0.0, 0, new ArrayList<>());
         }
@@ -379,7 +392,10 @@ public class AiController {
         // Clone loan states to simulate safely
         List<SimulatedLoan> loans = new ArrayList<>();
         for (Loan l : baseLoans) {
-            loans.add(new SimulatedLoan(l));
+            double currentBalance = loanBalances.getOrDefault(l.getId(), l.getPrincipal());
+            if (currentBalance > 0) {
+                loans.add(new SimulatedLoan(l, currentBalance));
+            }
         }
 
         List<ProjectionDataPoint> points = new ArrayList<>();
@@ -494,9 +510,9 @@ public class AiController {
         double rate;
         double emi;
 
-        SimulatedLoan(Loan loan) {
+        SimulatedLoan(Loan loan, double currentBalance) {
             this.name = loan.getName();
-            this.balance = loan.getPrincipal();
+            this.balance = currentBalance;
             this.rate = loan.getRate();
             this.emi = loan.getEmi();
         }
