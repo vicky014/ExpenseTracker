@@ -1,12 +1,11 @@
 package com.expensetracker.model;
 
-import jakarta.persistence.*;
+import org.springframework.data.annotation.Id;
+import org.springframework.data.mongodb.core.mapping.Document;
 
-@Entity
-@Table(name = "income_sources")
+@Document(collection = "income_sources")
 public class IncomeSource {
     @Id
-    @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
     
     private Long userId;

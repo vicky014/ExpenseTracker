@@ -1,13 +1,12 @@
 package com.expensetracker.model;
 
-import jakarta.persistence.*;
+import org.springframework.data.annotation.Id;
+import org.springframework.data.mongodb.core.mapping.Document;
 import java.time.LocalDateTime;
 
-@Entity
-@Table(name = "users")
+@Document(collection = "users")
 public class User {
     @Id
-    @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
     
     private String name;
@@ -15,12 +14,7 @@ public class User {
     private String currency = "₹";
     private Double savingsGoal = 0.0;
     
-    private LocalDateTime createdAt;
-
-    @PrePersist
-    protected void onCreate() {
-        createdAt = LocalDateTime.now();
-    }
+    private LocalDateTime createdAt = LocalDateTime.now();
 
     // Getters and Setters
     public Long getId() { return id; }

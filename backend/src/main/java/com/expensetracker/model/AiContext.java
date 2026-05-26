@@ -1,26 +1,19 @@
 package com.expensetracker.model;
 
-import jakarta.persistence.*;
+import org.springframework.data.annotation.Id;
+import org.springframework.data.mongodb.core.mapping.Document;
 import java.time.LocalDateTime;
 
-@Entity
-@Table(name = "ai_contexts")
+@Document(collection = "ai_contexts")
 public class AiContext {
     @Id
-    @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
     
     private Long userId;
     
-    @Column(columnDefinition = "TEXT")
     private String freeText;
     
-    private LocalDateTime createdAt;
-
-    @PrePersist
-    protected void onCreate() {
-        createdAt = LocalDateTime.now();
-    }
+    private LocalDateTime createdAt = LocalDateTime.now();
 
     // Getters and Setters
     public Long getId() { return id; }

@@ -214,6 +214,9 @@ public class LoanController {
             loan.setEmi(loanDetails.getEmi());
             loan.setLender(loanDetails.getLender());
             loan.setType(loanDetails.getType());
+            if (loanDetails.getPrepayPriority() != null) {
+                loan.setPrepayPriority(loanDetails.getPrepayPriority());
+            }
             if (loanDetails.getStartDate() != null) {
                 loan.setStartDate(loanDetails.getStartDate());
             }

@@ -10,7 +10,9 @@ import {
   LogOut, 
   CheckCircle, 
   User, 
-  ChevronRight, 
+  ChevronRight,
+  ChevronDown,
+  ChevronUp, 
   Mic, 
   Sparkles,
   Info,
@@ -76,7 +78,7 @@ interface EmiPayment {
 }
 
 interface Loan {
-  id: number;
+  id?: number;
   userId: number;
   name: string;
   principal: number;
@@ -86,6 +88,7 @@ interface Loan {
   startDate: string;
   lender: string;
   type: string;
+  prepayPriority?: 'HIGH' | 'MEDIUM' | 'LOW' | 'EXCLUDE';
 }
 
 interface LoanWithPayments {
@@ -185,6 +188,15 @@ export default function App() {
   const [sliceTenure, setSliceTenure] = useState<string>('6');
   const [sliceAmounts, setSliceAmounts] = useState<Record<string, string>>({});
   const [editingLoanId, setEditingLoanId] = useState<number | null>(null);
+  const [editingExpenseId, setEditingExpenseId] = useState<number | null>(null);
+  
+  const [editExpenseForm, setEditExpenseForm] = useState({
+    amount: '',
+    category: 'Food & Dining',
+    note: '',
+    isRecurring: false
+  });
+
   const [editLoanForm, setEditLoanForm] = useState({
     name: '',
     principal: '',
@@ -192,7 +204,8 @@ export default function App() {
     tenure: '',
     emi: '',
     lender: '',
-    type: 'Home'
+    type: 'Home',
+    prepayPriority: 'MEDIUM' as 'HIGH' | 'MEDIUM' | 'LOW' | 'EXCLUDE'
   });
 
   const [newLoan, setNewLoan] = useState({
@@ -202,7 +215,8 @@ export default function App() {
     tenure: '',
     emi: '',
     lender: '',
-    type: 'Home'
+    type: 'Home',
+    prepayPriority: 'MEDIUM' as 'HIGH' | 'MEDIUM' | 'LOW' | 'EXCLUDE'
   });
 
   const [scheduleFile, setScheduleFile] = useState<File | null>(null);
@@ -214,10 +228,89 @@ export default function App() {
     tenure: '',
     emi: '',
     lender: '',
-    type: 'Home'
+    type: 'Home',
+    prepayPriority: 'MEDIUM' as 'HIGH' | 'MEDIUM' | 'LOW' | 'EXCLUDE'
   });
   const [scheduleUploadError, setScheduleUploadError] = useState<string>('');
   const [isUploadingSchedule, setIsUploadingSchedule] = useState<boolean>(false);
+  const [collapsedLoanIds, setCollapsedLoanIds] = useState<Record<number, boolean>>({});
+  const toggleLoanCollapse = (id: number) => {
+    setCollapsedLoanIds(prev => ({ ...prev, [id]: !prev[id] }));
+  };
+
+  const getPriorityBadge = (priority?: string) => {
+    switch (priority) {
+      case 'HIGH':
+        return (
+          <span style={{ 
+            background: 'rgba(239, 68, 68, 0.12)', 
+            color: '#f87171', 
+            fontSize: '0.72rem', 
+            fontWeight: 600, 
+            padding: '0.2rem 0.5rem', 
+            borderRadius: '8px', 
+            border: '1px solid rgba(239, 68, 68, 0.2)',
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: '0.25rem'
+          }}>
+            🔥 High
+          </span>
+        );
+      case 'LOW':
+        return (
+          <span style={{ 
+            background: 'rgba(59, 130, 246, 0.12)', 
+            color: '#60a5fa', 
+            fontSize: '0.72rem', 
+            fontWeight: 600, 
+            padding: '0.2rem 0.5rem', 
+            borderRadius: '8px', 
+            border: '1px solid rgba(59, 130, 246, 0.2)',
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: '0.25rem'
+          }}>
+            🐢 Low
+          </span>
+        );
+      case 'EXCLUDE':
+        return (
+          <span style={{ 
+            background: 'rgba(156, 163, 175, 0.12)', 
+            color: '#9ca3af', 
+            fontSize: '0.72rem', 
+            fontWeight: 600, 
+            padding: '0.2rem 0.5rem', 
+            borderRadius: '8px', 
+            border: '1px solid rgba(156, 163, 175, 0.2)',
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: '0.25rem'
+          }}>
+            ❌ Excluded
+          </span>
+        );
+      case 'MEDIUM':
+      default:
+        return (
+          <span style={{ 
+            background: 'rgba(168, 85, 247, 0.12)', 
+            color: '#c084fc', 
+            fontSize: '0.72rem', 
+            fontWeight: 600, 
+            padding: '0.2rem 0.5rem', 
+            borderRadius: '8px', 
+            border: '1px solid rgba(168, 85, 247, 0.2)',
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: '0.25rem'
+          }}>
+            ⚡ Medium
+          </span>
+        );
+    }
+  };
 
   const [newIncome, setNewIncome] = useState({
     type: 'Salary',
@@ -446,7 +539,7 @@ Be generous in interpretation. "joining bonus", "sign-on bonus", "relocation all
   };
 
   // AI Payoff Math Projection Simulator
-  const calculateAiProjections = async () => {
+  async function calculateAiProjections() {
     setIsRecalculating(true);
     setNlpParsedResult(null);
 
@@ -513,7 +606,7 @@ Be generous in interpretation. "joining bonus", "sign-on bonus", "relocation all
     }
   };
 
-  const calculateAiProjectionsLocal = () => {
+  function calculateAiProjectionsLocal() {
     const totalIncome = incomes.reduce((sum, item) => sum + item.amount, 0);
     const totalExpenses = expenses.reduce((sum, item) => sum + item.amount, 0) || 28000;
     const totalEmi = loansWithPayments.reduce((sum, item) => sum + item.loan.emi, 0);
@@ -601,7 +694,8 @@ Be generous in interpretation. "joining bonus", "sign-on bonus", "relocation all
         name: lw.loan.name,
         balance: lw.payments.filter(p => !p.isPaid).reduce((s, p) => s + p.amount, 0),
         rate: lw.loan.rate,
-        emi: lw.loan.emi
+        emi: lw.loan.emi,
+        prepayPriority: lw.loan.prepayPriority || 'MEDIUM'
       })).filter(l => l.balance > 0);
 
       if (localLoans.length === 0) {
@@ -615,6 +709,13 @@ Be generous in interpretation. "joining bonus", "sign-on bonus", "relocation all
           projection: []
         };
       }
+
+      const priorityWeight: Record<string, number> = {
+        HIGH: 3,
+        MEDIUM: 2,
+        LOW: 1,
+        EXCLUDE: 0
+      };
 
       const points: ProjectionPoint[] = [];
       let totalInterest = 0;
@@ -664,27 +765,46 @@ Be generous in interpretation. "joining bonus", "sign-on bonus", "relocation all
         // 3. Priority Allocation
         if (activeExtra > 0) {
           if (strategy === 'Avalanche') {
-            localLoans.sort((a, b) => b.rate - a.rate);
+            localLoans.sort((a, b) => {
+              const pA = priorityWeight[a.prepayPriority] || 2;
+              const pB = priorityWeight[b.prepayPriority] || 2;
+              if (pA !== pB) return pB - pA;
+              return b.rate - a.rate;
+            });
           } else if (strategy === 'Snowball') {
-            localLoans.sort((a, b) => a.balance - b.balance);
+            localLoans.sort((a, b) => {
+              const pA = priorityWeight[a.prepayPriority] || 2;
+              const pB = priorityWeight[b.prepayPriority] || 2;
+              if (pA !== pB) return pB - pA;
+              return a.balance - b.balance;
+            });
           } else if (strategy === 'Balanced') {
-            const sumBalance = localLoans.reduce((sum, l) => sum + (l.balance > 0 ? l.balance : 0), 0);
+            // Find highest active priority group eligible for extra payments (not EXCLUDE)
+            const eligibleLoansForExtra = localLoans.filter(l => l.balance > 0 && l.prepayPriority !== 'EXCLUDE');
+            const maxWeight = eligibleLoansForExtra.reduce((max, l) => {
+              const w = priorityWeight[l.prepayPriority] || 2;
+              return w > max ? w : max;
+            }, 0);
+
+            const loansToPayExtra = eligibleLoansForExtra.filter(l => (priorityWeight[l.prepayPriority] || 2) === maxWeight);
+            const sumBalance = loansToPayExtra.reduce((sum, l) => sum + l.balance, 0);
+            
             if (sumBalance > 0) {
-              for (const l of localLoans) {
-                if (l.balance > 0) {
-                  const share = (l.balance / sumBalance) * activeExtra;
-                  const paid = Math.min(l.balance, share);
-                  l.balance -= paid;
-                  monthTotalPaid += paid;
-                }
+              let extraPaid = 0;
+              for (const l of loansToPayExtra) {
+                const share = (l.balance / sumBalance) * activeExtra;
+                const paid = Math.min(l.balance, share);
+                l.balance -= paid;
+                monthTotalPaid += paid;
+                extraPaid += paid;
               }
-              activeExtra = 0;
+              activeExtra = Math.max(0, activeExtra - extraPaid);
             }
           }
 
           if (strategy !== 'Balanced') {
             for (const l of localLoans) {
-              if (l.balance > 0 && activeExtra > 0) {
+              if (l.balance > 0 && activeExtra > 0 && l.prepayPriority !== 'EXCLUDE') {
                 const paid = Math.min(l.balance, activeExtra);
                 l.balance -= paid;
                 monthTotalPaid += paid;
@@ -792,6 +912,52 @@ Be generous in interpretation. "joining bonus", "sign-on bonus", "relocation all
       await fetch(`${API_BASE}/expenses/${id}`, { method: 'DELETE' });
       loadAllData();
     }
+  };
+
+  const startEditingExpense = (e: Expense) => {
+    if (e.id) {
+      setEditingExpenseId(e.id);
+      setEditExpenseForm({
+        amount: e.amount.toString(),
+        category: e.category,
+        note: e.note,
+        isRecurring: e.isRecurring
+      });
+    }
+  };
+
+  const handleUpdateExpense = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingExpenseId || !editExpenseForm.amount) return;
+
+    const payload = {
+      userId: 1,
+      amount: parseFloat(editExpenseForm.amount),
+      category: editExpenseForm.category,
+      note: editExpenseForm.note || 'Updated transaction',
+      date: new Date().toISOString().split('T')[0],
+      isRecurring: editExpenseForm.isRecurring
+    };
+
+    if (isUsingFallback) {
+      const updated = expenses.map(item => {
+        if (item.id === editingExpenseId) {
+          return { ...item, ...payload };
+        }
+        return item;
+      });
+      setExpenses(updated);
+      localStorage.setItem('expenses', JSON.stringify(updated));
+    } else {
+      await fetch(`${API_BASE}/expenses/${editingExpenseId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      loadAllData();
+    }
+
+    setEditingExpenseId(null);
   };
 
   // Loan & EMI Tick Off Handler
@@ -907,7 +1073,8 @@ Be generous in interpretation. "joining bonus", "sign-on bonus", "relocation all
         emi: parsedPayments[0].amount, // baseline EMI set as first installment
         lender: newLoan.lender || 'Slice Card',
         type: newLoan.type,
-        startDate: sliceMonthsList[0].dateStr
+        startDate: sliceMonthsList[0].dateStr,
+        prepayPriority: newLoan.prepayPriority || 'MEDIUM'
       };
 
       if (isUsingFallback) {
@@ -921,7 +1088,8 @@ Be generous in interpretation. "joining bonus", "sign-on bonus", "relocation all
           emi: loanPayload.emi,
           startDate: loanPayload.startDate,
           lender: loanPayload.lender,
-          type: loanPayload.type
+          type: loanPayload.type,
+          prepayPriority: newLoan.prepayPriority || 'MEDIUM'
         };
 
         const generatedPayments: EmiPayment[] = parsedPayments.map((p, i) => ({
@@ -972,7 +1140,8 @@ Be generous in interpretation. "joining bonus", "sign-on bonus", "relocation all
       emi: isSimple ? emiValue : undefined,
       lender: newLoan.lender || 'Private Lender',
       type: newLoan.type,
-      startDate: new Date().toISOString().split('T')[0]
+      startDate: new Date().toISOString().split('T')[0],
+      prepayPriority: newLoan.prepayPriority || 'MEDIUM'
     };
 
     if (isUsingFallback) {
@@ -992,7 +1161,8 @@ Be generous in interpretation. "joining bonus", "sign-on bonus", "relocation all
         emi: roundedEmi,
         startDate: payload.startDate,
         lender: payload.lender,
-        type: payload.type
+        type: payload.type,
+        prepayPriority: newLoan.prepayPriority || 'MEDIUM'
       };
 
       const generatedPayments: EmiPayment[] = Array.from({ length: n }, (_, i) => ({
@@ -1017,7 +1187,7 @@ Be generous in interpretation. "joining bonus", "sign-on bonus", "relocation all
       loadAllData();
     }
 
-    setNewLoan({ name: '', principal: '', rate: '', tenure: '', emi: '', lender: '', type: 'Home' });
+    setNewLoan({ name: '', principal: '', rate: '', tenure: '', emi: '', lender: '', type: 'Home', prepayPriority: 'MEDIUM' });
   };
 
   const applyDetectedScheduleLoan = (result: ScheduleUploadResult) => {
@@ -1143,7 +1313,8 @@ Be generous in interpretation. "joining bonus", "sign-on bonus", "relocation all
       emi: parseFloat(scheduleUploadForm.emi),
       startDate: scheduleUploadResult.payments[0].dueDate,
       lender: scheduleUploadForm.lender,
-      type: scheduleUploadForm.type
+      type: scheduleUploadForm.type,
+      prepayPriority: scheduleUploadForm.prepayPriority
     };
 
     if (isUsingFallback) {
@@ -1176,7 +1347,7 @@ Be generous in interpretation. "joining bonus", "sign-on bonus", "relocation all
     setScheduleFile(null);
     setScheduleUploadResult(null);
     setScheduleUploadError('');
-    setScheduleUploadForm({ name: '', principal: '', rate: '0', tenure: '', emi: '', lender: '', type: 'Home' });
+    setScheduleUploadForm({ name: '', principal: '', rate: '0', tenure: '', emi: '', lender: '', type: 'Home', prepayPriority: 'MEDIUM' });
   };
 
   const handleDeleteLoan = async (id: number) => {
@@ -1200,7 +1371,8 @@ Be generous in interpretation. "joining bonus", "sign-on bonus", "relocation all
       tenure: parseInt(editLoanForm.tenure) || 0,
       emi: parseFloat(editLoanForm.emi) || 0,
       lender: editLoanForm.lender,
-      type: editLoanForm.type
+      type: editLoanForm.type,
+      prepayPriority: editLoanForm.prepayPriority
     };
 
     if (isUsingFallback) {
@@ -1805,7 +1977,7 @@ Be generous in interpretation. "joining bonus", "sign-on bonus", "relocation all
                 </h3>
                 
                 {aiAnalysis && (
-                  <div style={{ height: '300px', marginTop: '1.5rem' }}>
+                  <div style={{ height: '300px', width: '100%', position: 'relative', marginTop: '1.5rem' }}>
                     <ResponsiveContainer width="100%" height="100%">
                       <AreaChart data={aiAnalysis.avalanche.projection}>
                         <defs>
@@ -1966,38 +2138,102 @@ Be generous in interpretation. "joining bonus", "sign-on bonus", "relocation all
                   {expenses.length === 0 ? (
                     <p style={{ color: 'var(--text-dimmed)', textAlign: 'center', marginTop: '2rem' }}>No logged transaction details yet.</p>
                   ) : (
-                    expenses.slice().reverse().map(e => (
-                      <div key={e.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '1rem', background: 'rgba(255,255,255,0.02)', borderRadius: '12px', border: '1px solid rgba(255,255,255,0.04)' }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
-                          <span style={{ fontSize: '1.75rem' }}>
-                            {e.category === 'Food & Dining' ? '🍕' :
-                             e.category === 'Transport' ? '🚗' :
-                             e.category === 'Utilities & Bills' ? '💡' :
-                             e.category === 'Shopping' ? '🛍️' : '📦'}
-                          </span>
-                          <div>
-                            <div style={{ fontWeight: 600 }}>{e.note || e.category}</div>
-                            <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', display: 'flex', gap: '0.5rem' }}>
-                              <span>{e.date}</span>
-                              {e.isRecurring && <span style={{ color: 'var(--primary)' }}>• Recurring</span>}
-                            </div>
-                          </div>
+                    expenses.slice().reverse().map(e => {
+                      const isEditing = editingExpenseId === e.id;
+                      return (
+                        <div key={e.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '1rem', background: 'rgba(255,255,255,0.02)', borderRadius: '12px', border: isEditing ? '1px solid var(--primary)' : '1px solid rgba(255,255,255,0.04)', transition: 'all 0.3s ease' }}>
+                          {isEditing ? (
+                            <form onSubmit={handleUpdateExpense} style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', width: '100%', padding: '0.25rem' }}>
+                              <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap' }}>
+                                <input 
+                                  type="number" 
+                                  value={editExpenseForm.amount}
+                                  onChange={(evt) => setEditExpenseForm({ ...editExpenseForm, amount: evt.target.value })}
+                                  style={{ width: '120px', padding: '0.4rem 0.75rem', borderRadius: '8px' }}
+                                  required
+                                  placeholder="Amount"
+                                />
+                                <input 
+                                  type="text" 
+                                  value={editExpenseForm.note}
+                                  onChange={(evt) => setEditExpenseForm({ ...editExpenseForm, note: evt.target.value })}
+                                  style={{ flex: 1, minWidth: '150px', padding: '0.4rem 0.75rem', borderRadius: '8px' }}
+                                  placeholder="Note / Description"
+                                />
+                                <select 
+                                  value={editExpenseForm.category}
+                                  onChange={(evt) => setEditExpenseForm({ ...editExpenseForm, category: evt.target.value })}
+                                  style={{ width: '160px', padding: '0.4rem 0.75rem', borderRadius: '8px' }}
+                                >
+                                  <option value="Food & Dining">🍕 Food & Dining</option>
+                                  <option value="Transport">🚗 Transport</option>
+                                  <option value="Utilities & Bills">💡 Utilities & Bills</option>
+                                  <option value="Health">🏥 Health</option>
+                                  <option value="Entertainment">🎮 Entertainment</option>
+                                  <option value="Shopping">🛍️ Shopping</option>
+                                  <option value="Education">📚 Education</option>
+                                  <option value="Travel">✈️ Travel</option>
+                                  <option value="Other">📦 Other</option>
+                                </select>
+                              </div>
+                              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.5rem' }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                                  <input 
+                                    type="checkbox" 
+                                    id={`editIsRecurring-${e.id}`}
+                                    checked={editExpenseForm.isRecurring}
+                                    onChange={(evt) => setEditExpenseForm({ ...editExpenseForm, isRecurring: evt.target.checked })}
+                                  />
+                                  <label htmlFor={`editIsRecurring-${e.id}`} style={{ fontSize: '0.82rem', cursor: 'pointer' }}>Recurring monthly</label>
+                                </div>
+                                <div style={{ display: 'flex', gap: '0.5rem' }}>
+                                  <button type="submit" className="btn btn-primary" style={{ padding: '0.35rem 0.75rem', fontSize: '0.8rem' }}>Save</button>
+                                  <button type="button" className="btn btn-secondary" onClick={() => setEditingExpenseId(null)} style={{ padding: '0.35rem 0.75rem', fontSize: '0.8rem' }}>Cancel</button>
+                                </div>
+                              </div>
+                            </form>
+                          ) : (
+                            <>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+                                <span style={{ fontSize: '1.75rem' }}>
+                                  {e.category === 'Food & Dining' ? '🍕' :
+                                   e.category === 'Transport' ? '🚗' :
+                                   e.category === 'Utilities & Bills' ? '💡' :
+                                   e.category === 'Shopping' ? '🛍️' : '📦'}
+                                </span>
+                                <div>
+                                  <div style={{ fontWeight: 600 }}>{e.note || e.category}</div>
+                                  <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', display: 'flex', gap: '0.5rem' }}>
+                                    <span>{e.date}</span>
+                                    {e.isRecurring && <span style={{ color: 'var(--primary)' }}>• Recurring</span>}
+                                  </div>
+                                </div>
+                              </div>
+ 
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                                <span style={{ fontWeight: 700, fontSize: '1.1rem', color: 'var(--danger)' }}>
+                                  -{userProfile.currency}{e.amount.toLocaleString()}
+                                </span>
+                                <button 
+                                  className="btn btn-secondary" 
+                                  style={{ padding: '0.35rem 0.6rem', color: 'var(--primary)', borderColor: 'rgba(168, 85, 247, 0.2)' }}
+                                  onClick={() => e.id && startEditingExpense(e)}
+                                >
+                                  Edit
+                                </button>
+                                <button 
+                                  className="btn btn-secondary" 
+                                  style={{ padding: '0.35rem 0.6rem', color: 'var(--danger)', borderColor: 'rgba(239, 68, 68, 0.2)' }}
+                                  onClick={() => e.id && handleDeleteExpense(e.id)}
+                                >
+                                  Delete
+                                </button>
+                              </div>
+                            </>
+                          )}
                         </div>
-
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '1.25rem' }}>
-                          <span style={{ fontWeight: 700, fontSize: '1.1rem', color: 'var(--danger)' }}>
-                            -{userProfile.currency}{e.amount.toLocaleString()}
-                          </span>
-                          <button 
-                            className="btn btn-secondary" 
-                            style={{ padding: '0.35rem 0.6rem', color: 'var(--danger)', borderColor: 'rgba(239, 68, 68, 0.2)' }}
-                            onClick={() => e.id && handleDeleteExpense(e.id)}
-                          >
-                            Delete
-                          </button>
-                        </div>
-                      </div>
-                    ))
+                      );
+                    })
                   )}
                 </div>
               </div>
@@ -2258,6 +2494,20 @@ Be generous in interpretation. "joining bonus", "sign-on bonus", "relocation all
                     value={newLoan.lender}
                     onChange={(e) => setNewLoan({ ...newLoan, lender: e.target.value })}
                   />
+
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
+                    <label style={{ fontSize: '0.78rem', color: 'var(--text-muted)', fontWeight: 500 }}>Prepayment Priority Weight</label>
+                    <select 
+                      value={newLoan.prepayPriority || 'MEDIUM'}
+                      onChange={(e) => setNewLoan({ ...newLoan, prepayPriority: e.target.value as 'HIGH' | 'MEDIUM' | 'LOW' | 'EXCLUDE' })}
+                      style={{ width: '100%', padding: '0.5rem', borderRadius: '8px', background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.1)', color: 'var(--text-main)' }}
+                    >
+                      <option value="HIGH">🔥 High Priority (Prepay First)</option>
+                      <option value="MEDIUM">⚡ Medium Priority (Standard)</option>
+                      <option value="LOW">🐢 Low Priority (Prepay Last)</option>
+                      <option value="EXCLUDE">❌ Exclude (No Extra Prepayments)</option>
+                    </select>
+                  </div>
                   
                   <button type="submit" className="btn btn-primary" style={{ width: '100%' }}>
                     Register Loan Schedule
@@ -2359,6 +2609,15 @@ Be generous in interpretation. "joining bonus", "sign-on bonus", "relocation all
                         <option value="Personal">Personal Loan</option>
                         <option value="Friend">Friend/Other</option>
                       </select>
+                      <select
+                        value={scheduleUploadForm.prepayPriority || 'MEDIUM'}
+                        onChange={(e) => setScheduleUploadForm({ ...scheduleUploadForm, prepayPriority: e.target.value as 'HIGH' | 'MEDIUM' | 'LOW' | 'EXCLUDE' })}
+                      >
+                        <option value="HIGH">🔥 High Priority (Prepay First)</option>
+                        <option value="MEDIUM">⚡ Medium Priority (Standard)</option>
+                        <option value="LOW">🐢 Low Priority (Prepay Last)</option>
+                        <option value="EXCLUDE">❌ Exclude (No Extra Prepayments)</option>
+                      </select>
                       <button type="button" className="btn btn-primary" onClick={handleCreateLoanFromSchedule}>
                         Create Debt From Uploaded Schedule
                       </button>
@@ -2379,6 +2638,8 @@ Be generous in interpretation. "joining bonus", "sign-on bonus", "relocation all
                     const remainingBalance = lw.payments.filter(p => !p.isPaid).reduce((sum, p) => sum + p.amount, 0);
                     
                     const isEditing = editingLoanId === lw.loan.id;
+                    const isCollapsed = collapsedLoanIds[lw.loan.id];
+                    const monthsLeft = lw.payments.filter(p => !p.isPaid).length;
                     
                     return (
                       <div key={lw.loan.id} style={{ 
@@ -2472,6 +2733,22 @@ Be generous in interpretation. "joining bonus", "sign-on bonus", "relocation all
                               </div>
                             </div>
 
+                            <div style={{ display: 'flex', gap: '0.75rem' }}>
+                              <div style={{ width: '100%', display: 'flex', flexDirection: 'column', gap: '0.2rem' }}>
+                                <label style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Prepayment Priority</label>
+                                <select
+                                  value={editLoanForm.prepayPriority || 'MEDIUM'}
+                                  onChange={(e) => setEditLoanForm({ ...editLoanForm, prepayPriority: e.target.value as 'HIGH' | 'MEDIUM' | 'LOW' | 'EXCLUDE' })}
+                                  style={{ width: '100%', padding: '0.45rem', borderRadius: '8px' }}
+                                >
+                                  <option value="HIGH">🔥 High Priority (Prepay First)</option>
+                                  <option value="MEDIUM">⚡ Medium Priority (Standard)</option>
+                                  <option value="LOW">🐢 Low Priority (Prepay Last)</option>
+                                  <option value="EXCLUDE">❌ Exclude (No Extra Prepayments)</option>
+                                </select>
+                              </div>
+                            </div>
+
                             <div style={{ display: 'flex', gap: '0.75rem', marginTop: '0.5rem' }}>
                               <button
                                 className="btn btn-primary"
@@ -2491,11 +2768,95 @@ Be generous in interpretation. "joining bonus", "sign-on bonus", "relocation all
                           </div>
                         ) : (
                           <>
-                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.85rem' }}>
-                              <div>
-                                <h4 style={{ margin: 0, fontSize: '1.15rem' }}>{lw.loan.name}</h4>
-                                <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', display: 'flex', flexDirection: 'column', gap: '0.25rem', marginTop: '0.35rem' }}>
-                                  <span>Lender: {lw.loan.lender} • Type: {lw.loan.type}</span>
+                            <div 
+                              style={{ 
+                                display: 'flex', 
+                                justifyContent: 'space-between', 
+                                alignItems: 'center', 
+                                cursor: 'pointer',
+                                userSelect: 'none'
+                              }}
+                              onClick={() => toggleLoanCollapse(lw.loan.id)}
+                            >
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flex: 1, marginRight: '1rem' }}>
+                                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: '28px', height: '28px', borderRadius: '50%', background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.05)' }}>
+                                  {isCollapsed ? <ChevronDown size={16} style={{ color: 'var(--text-muted)' }} /> : <ChevronUp size={16} style={{ color: 'var(--text-muted)' }} />}
+                                </div>
+                                <div style={{ flex: 1 }}>
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.65rem', flexWrap: 'wrap' }}>
+                                    <h4 style={{ margin: 0, fontSize: '1.15rem' }}>{lw.loan.name}</h4>
+                                    {getPriorityBadge(lw.loan.prepayPriority)}
+                                  </div>
+                                  
+                                  {isCollapsed ? (
+                                    <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginTop: '0.35rem', display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap', rowGap: '0.25rem' }}>
+                                      <span>Lender: {lw.loan.lender}</span>
+                                      <span style={{ opacity: 0.3 }}>•</span>
+                                      <span>Type: {lw.loan.type}</span>
+                                      <span style={{ opacity: 0.3 }}>•</span>
+                                      <span style={{ color: 'var(--text-main)', fontWeight: 600 }}>
+                                        Outstanding: {userProfile.currency}{remainingBalance.toLocaleString()} / {userProfile.currency}{lw.loan.principal.toLocaleString()}
+                                      </span>
+                                      <span style={{ opacity: 0.3 }}>•</span>
+                                      <span style={{ color: 'var(--success)', fontWeight: 600 }}>
+                                        🕒 {monthsLeft} month{monthsLeft !== 1 ? 's' : ''} left
+                                      </span>
+                                      <span style={{ opacity: 0.3 }}>•</span>
+                                      <span style={{ background: 'rgba(16,185,129,0.08)', color: '#34d399', padding: '0.1rem 0.4rem', borderRadius: '6px', fontSize: '0.72rem', fontWeight: 600 }}>
+                                        {pct}% paid
+                                      </span>
+                                    </div>
+                                  ) : (
+                                    <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginTop: '0.25rem' }}>
+                                      Lender: {lw.loan.lender} • Type: {lw.loan.type}
+                                    </div>
+                                  )}
+                                </div>
+                              </div>
+                              
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }} onClick={(e) => e.stopPropagation()}>
+                                <div style={{ textAlign: 'right' }}>
+                                  <div style={{ fontWeight: 700, color: 'var(--success)' }}>{userProfile.currency}{remainingBalance.toLocaleString()} left</div>
+                                  <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>EMI: {userProfile.currency}{lw.loan.emi.toLocaleString()}</div>
+                                </div>
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
+                                  <button 
+                                    className="btn btn-secondary" 
+                                    style={{ padding: '0.3rem 0.6rem', fontSize: '0.78rem', borderColor: 'var(--primary)' }}
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      setEditingLoanId(lw.loan.id);
+                                      setEditLoanForm({
+                                        name: lw.loan.name,
+                                        principal: String(lw.loan.principal),
+                                        rate: String(lw.loan.rate),
+                                        tenure: String(lw.loan.tenure),
+                                        emi: String(lw.loan.emi),
+                                        lender: lw.loan.lender,
+                                        type: lw.loan.type,
+                                        prepayPriority: lw.loan.prepayPriority || 'MEDIUM'
+                                      });
+                                    }}
+                                  >
+                                    Edit Details
+                                  </button>
+                                  <button 
+                                    className="btn btn-secondary" 
+                                    style={{ padding: '0.3rem 0.6rem', fontSize: '0.78rem', color: 'var(--danger)', borderColor: 'rgba(239, 68, 68, 0.2)' }}
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      handleDeleteLoan(lw.loan.id);
+                                    }}
+                                  >
+                                    Delete
+                                  </button>
+                                </div>
+                              </div>
+                            </div>
+
+                            {!isCollapsed && (
+                              <>
+                                <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', display: 'flex', flexDirection: 'column', gap: '0.25rem', marginTop: '0.5rem', borderTop: '1px solid rgba(255,255,255,0.03)', paddingTop: '0.5rem' }}>
                                   <span style={{ color: 'var(--text-main)', fontWeight: 600 }}>💰 Amount Borrowed: {userProfile.currency}{lw.loan.principal.toLocaleString()}</span>
                                   {lw.loan.rate > 0 && (
                                     <span style={{ color: 'var(--warning)', fontWeight: 500 }}>📈 Interest Rate: {lw.loan.rate}% p.a.</span>
@@ -2506,130 +2867,98 @@ Be generous in interpretation. "joining bonus", "sign-on bonus", "relocation all
                                     </span>
                                   )}
                                 </div>
-                              </div>
-                              <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
-                                <div style={{ textAlign: 'right' }}>
-                                  <div style={{ fontWeight: 700, color: 'var(--success)' }}>{userProfile.currency}{remainingBalance.toLocaleString()} left</div>
-                                  <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>EMI: {userProfile.currency}{lw.loan.emi.toLocaleString()}</div>
-                                </div>
-                                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
-                                  <button 
-                                    className="btn btn-secondary" 
-                                    style={{ padding: '0.3rem 0.6rem', fontSize: '0.78rem', borderColor: 'var(--primary)' }}
-                                    onClick={() => {
-                                      setEditingLoanId(lw.loan.id);
-                                      setEditLoanForm({
-                                        name: lw.loan.name,
-                                        principal: String(lw.loan.principal),
-                                        rate: String(lw.loan.rate),
-                                        tenure: String(lw.loan.tenure),
-                                        emi: String(lw.loan.emi),
-                                        lender: lw.loan.lender,
-                                        type: lw.loan.type
-                                      });
-                                    }}
-                                  >
-                                    Edit Details
-                                  </button>
-                                  <button 
-                                    className="btn btn-secondary" 
-                                    style={{ padding: '0.3rem 0.6rem', fontSize: '0.78rem', color: 'var(--danger)', borderColor: 'rgba(239, 68, 68, 0.2)' }}
-                                    onClick={() => handleDeleteLoan(lw.loan.id)}
-                                  >
-                                    Delete
-                                  </button>
-                                </div>
-                              </div>
-                            </div>
 
-                            {/* Progress Bar */}
-                            <div style={{ marginBottom: '1rem' }}>
-                              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: '0.35rem' }}>
-                                <span>EMI progress: {paidCount}/{totalCount} payments ticked</span>
-                                <span>{pct}% Paid</span>
-                              </div>
-                              <div style={{ width: '100%', height: '8px', background: 'rgba(255,255,255,0.05)', borderRadius: '4px', overflow: 'hidden' }}>
-                                <div style={{ height: '100%', width: `${pct}%`, background: 'linear-gradient(90deg, var(--success), #059669)', borderRadius: '4px' }}></div>
-                              </div>
-                            </div>
+                                {/* Progress Bar */}
+                                <div style={{ marginBottom: '1rem', marginTop: '1rem' }}>
+                                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: '0.35rem' }}>
+                                    <span>EMI progress: {paidCount}/{totalCount} payments ticked</span>
+                                    <span>{pct}% Paid</span>
+                                  </div>
+                                  <div style={{ width: '100%', height: '8px', background: 'rgba(255,255,255,0.05)', borderRadius: '4px', overflow: 'hidden' }}>
+                                    <div style={{ height: '100%', width: `${pct}%`, background: 'linear-gradient(90deg, var(--success), #059669)', borderRadius: '4px' }}></div>
+                                  </div>
+                                </div>
+                              </>
+                            )}
                           </>
                         )}
 
-                        {/* Amortization EMI grids for tick off */}
-                        <div>
-                          <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)', display: 'block', marginBottom: '0.5rem' }}>EMI Installment Overview Grid (Tick to clear):</span>
-                          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem', maxHeight: '110px', overflowY: 'auto', paddingRight: '0.5rem', marginBottom: '1.25rem' }}>
-                            {lw.payments.map((p, idx) => (
-                              <label key={p.id} className="emi-checkbox-container" title={`Due: ${p.dueDate}`}>
-                                <input 
-                                  type="checkbox" 
-                                  className="emi-checkbox-input"
-                                  checked={p.isPaid}
-                                  onChange={() => handleToggleEmiPayment(lw.loan.id, p.id, p.isPaid)}
-                                />
-                                <span className="emi-checkbox-custom" style={{ 
-                                  background: p.isPaid ? '' : 'rgba(255,255,255,0.03)',
-                                  borderColor: p.isPaid ? '' : 'rgba(255,255,255,0.1)'
-                                }}>
-                                  {p.isPaid ? '✓' : idx + 1}
-                                </span>
-                              </label>
-                            ))}
-                          </div>
+                        {!isCollapsed && (
+                          <div>
+                            <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)', display: 'block', marginBottom: '0.5rem', marginTop: '1rem' }}>EMI Installment Overview Grid (Tick to clear):</span>
+                            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem', maxHeight: '110px', overflowY: 'auto', paddingRight: '0.5rem', marginBottom: '1.25rem' }}>
+                              {lw.payments.map((p, idx) => (
+                                <label key={p.id} className="emi-checkbox-container" title={`Due: ${p.dueDate}`}>
+                                  <input 
+                                    type="checkbox" 
+                                    className="emi-checkbox-input"
+                                    checked={p.isPaid}
+                                    onChange={() => handleToggleEmiPayment(lw.loan.id, p.id, p.isPaid)}
+                                  />
+                                  <span className="emi-checkbox-custom" style={{ 
+                                    background: p.isPaid ? '' : 'rgba(255,255,255,0.03)',
+                                    borderColor: p.isPaid ? '' : 'rgba(255,255,255,0.1)'
+                                  }}>
+                                    {p.isPaid ? '✓' : idx + 1}
+                                  </span>
+                                </label>
+                              ))}
+                            </div>
 
-                          {/* Variable EMI Upcoming adjustments */}
-                          <div style={{ background: 'rgba(255,255,255,0.02)', padding: '1rem', borderRadius: '12px', border: '1px solid rgba(255,255,255,0.04)' }}>
-                            <span style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--primary)', display: 'flex', alignItems: 'center', gap: '0.35rem', marginBottom: '0.75rem' }}>
-                              <Sparkles size={14} /> Variable Installment Adjuster (All Months)
-                            </span>
-                            <div style={{ 
-                              display: 'flex', 
-                              flexDirection: 'column', 
-                              gap: '0.75rem',
-                              maxHeight: '260px',
-                              overflowY: 'auto',
-                              paddingRight: '0.5rem'
-                            }}>
-                              {lw.payments.filter(p => !p.isPaid).map((p) => {
-                                const idx = lw.payments.findIndex(item => item.id === p.id);
-                                return (
-                                  <div key={p.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.85rem' }}>
-                                    <span style={{ fontWeight: 500 }}>Month #{idx + 1} ({new Date(p.dueDate).toLocaleDateString('en-US', { month: 'short', year: 'numeric' })})</span>
-                                    
-                                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-                                      <div style={{ position: 'relative', width: '110px' }}>
-                                        <span style={{ position: 'absolute', left: '0.6rem', top: '50%', transform: 'translateY(-50%)', fontSize: '0.8rem', color: 'var(--text-muted)' }}>₹</span>
-                                        <input 
-                                          type="number" 
-                                          defaultValue={p.amount}
-                                          onBlur={(e) => handleUpdateEmiAmount(lw.loan.id, p.id, parseFloat(e.target.value))}
-                                          onKeyDown={(e) => {
-                                            if (e.key === 'Enter') {
-                                              handleUpdateEmiAmount(lw.loan.id, p.id, parseFloat((e.target as HTMLInputElement).value));
-                                              (e.target as HTMLInputElement).blur();
-                                            }
-                                          }}
-                                          style={{ width: '100%', padding: '0.35rem 0.5rem 0.35rem 1.25rem', fontSize: '0.85rem', borderRadius: '8px' }}
-                                          title="Click to change variable paid amount for this month"
-                                        />
+                            {/* Variable EMI Upcoming adjustments */}
+                            <div style={{ background: 'rgba(255,255,255,0.02)', padding: '1rem', borderRadius: '12px', border: '1px solid rgba(255,255,255,0.04)' }}>
+                              <span style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--primary)', display: 'flex', alignItems: 'center', gap: '0.35rem', marginBottom: '0.75rem' }}>
+                                <Sparkles size={14} /> Variable Installment Adjuster (All Months)
+                              </span>
+                              <div style={{ 
+                                display: 'flex', 
+                                flexDirection: 'column', 
+                                gap: '0.75rem',
+                                maxHeight: '260px',
+                                overflowY: 'auto',
+                                paddingRight: '0.5rem'
+                              }}>
+                                {lw.payments.filter(p => !p.isPaid).map((p) => {
+                                  const idx = lw.payments.findIndex(item => item.id === p.id);
+                                  return (
+                                    <div key={p.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.85rem' }}>
+                                      <span style={{ fontWeight: 500 }}>Month #{idx + 1} ({new Date(p.dueDate).toLocaleDateString('en-US', { month: 'short', year: 'numeric' })})</span>
+                                      
+                                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                                        <div style={{ position: 'relative', width: '110px' }}>
+                                          <span style={{ position: 'absolute', left: '0.6rem', top: '50%', transform: 'translateY(-50%)', fontSize: '0.8rem', color: 'var(--text-muted)' }}>₹</span>
+                                          <input 
+                                            type="number" 
+                                            defaultValue={p.amount}
+                                            onBlur={(e) => handleUpdateEmiAmount(lw.loan.id, p.id, parseFloat(e.target.value))}
+                                            onKeyDown={(e) => {
+                                              if (e.key === 'Enter') {
+                                                handleUpdateEmiAmount(lw.loan.id, p.id, parseFloat((e.target as HTMLInputElement).value));
+                                                (e.target as HTMLInputElement).blur();
+                                              }
+                                            }}
+                                            style={{ width: '100%', padding: '0.35rem 0.5rem 0.35rem 1.25rem', fontSize: '0.85rem', borderRadius: '8px' }}
+                                            title="Click to change variable paid amount for this month"
+                                          />
+                                        </div>
+                                        <button 
+                                          className="btn btn-primary" 
+                                          style={{ padding: '0.35rem 0.75rem', fontSize: '0.8rem', borderRadius: '8px' }}
+                                          onClick={() => handleToggleEmiPayment(lw.loan.id, p.id, false)}
+                                        >
+                                          Mark Paid
+                                        </button>
                                       </div>
-                                      <button 
-                                        className="btn btn-primary" 
-                                        style={{ padding: '0.35rem 0.75rem', fontSize: '0.8rem', borderRadius: '8px' }}
-                                        onClick={() => handleToggleEmiPayment(lw.loan.id, p.id, false)}
-                                      >
-                                        Mark Paid
-                                      </button>
                                     </div>
-                                  </div>
-                                );
-                              })}
-                              {lw.payments.filter(p => !p.isPaid).length === 0 && (
-                                <div style={{ fontSize: '0.8rem', color: 'var(--success)', textAlign: 'center', padding: '0.5rem' }}>🎉 Outstanding debt fully paid off!</div>
-                              )}
+                                  );
+                                })}
+                                {lw.payments.filter(p => !p.isPaid).length === 0 && (
+                                  <div style={{ fontSize: '0.8rem', color: 'var(--success)', textAlign: 'center', padding: '0.5rem' }}>🎉 Outstanding debt fully paid off!</div>
+                                )}
+                              </div>
                             </div>
                           </div>
-                        </div>
+                        )}
                       </div>
                     );
                   })}
@@ -2950,7 +3279,7 @@ Be generous in interpretation. "joining bonus", "sign-on bonus", "relocation all
                               color: 'white',
                               borderRadius: '8px'
                             }} 
-                            formatter={(value: number | string) => [`₹${Number(value).toLocaleString()}`, '']}
+                            formatter={(value: unknown) => [`₹${Number(value || 0).toLocaleString()}`, '']}
                           />
                           <Legend wrapperStyle={{ fontSize: '11px', paddingTop: '10px' }} />
                           <Area name="Baseline (Minimums)" type="monotone" dataKey="Baseline" stroke="var(--accent)" strokeWidth={2} fillOpacity={1} fill="url(#colorBaselinePlanner)" />

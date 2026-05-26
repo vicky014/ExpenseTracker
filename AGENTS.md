@@ -18,6 +18,21 @@ Run backend commands from `backend/`:
 - `mvn test`: run Spring Boot tests.
 - `mvn package`: compile, test, and create the backend artifact.
 
+### Local Database Setup (MongoDB via Docker)
+
+- **Create and Start Container with Persistent Storage:**
+  ```bash
+  docker run --name expensetracker-mongo -p 27017:27017 -v expensetracker-data:/data/db -d mongo:latest
+  ```
+- **Start Existing Container:**
+  ```bash
+  docker start expensetracker-mongo
+  ```
+- **Stop Container:**
+  ```bash
+  docker stop expensetracker-mongo
+  ```
+
 Run frontend commands from `frontend/`:
 
 - `npm install`: install dependencies from `package-lock.json`.
@@ -46,4 +61,4 @@ Pull requests should include a clear summary, test/build commands run, linked is
 
 ## Security & Configuration Tips
 
-Do not commit secrets or local credentials. The backend currently uses local H2 settings in `application.properties`; keep production database credentials and API keys in environment-specific configuration outside version control.
+Do not commit secrets or local credentials. The backend currently uses local MongoDB settings in `application.properties`; keep production database credentials and API keys in environment-specific configuration outside version control.

@@ -27,6 +27,20 @@ public class ExpenseController {
         return expenseRepository.save(expense);
     }
 
+    @PutMapping("/{id}")
+    public Expense updateExpense(@PathVariable Long id, @RequestBody Expense expenseDetails) {
+        Expense expense = expenseRepository.findById(id)
+                .orElseThrow(() -> new IllegalArgumentException("Expense not found with id: " + id));
+        expense.setAmount(expenseDetails.getAmount());
+        expense.setCategory(expenseDetails.getCategory());
+        expense.setNote(expenseDetails.getNote());
+        expense.setIsRecurring(expenseDetails.getIsRecurring());
+        if (expenseDetails.getDate() != null) {
+            expense.setDate(expenseDetails.getDate());
+        }
+        return expenseRepository.save(expense);
+    }
+
     @DeleteMapping("/{id}")
     public void deleteExpense(@PathVariable Long id) {
         expenseRepository.deleteById(id);

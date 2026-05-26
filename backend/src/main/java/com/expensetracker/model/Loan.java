@@ -1,13 +1,12 @@
 package com.expensetracker.model;
 
-import jakarta.persistence.*;
+import org.springframework.data.annotation.Id;
+import org.springframework.data.mongodb.core.mapping.Document;
 import java.time.LocalDate;
 
-@Entity
-@Table(name = "loans")
+@Document(collection = "loans")
 public class Loan {
     @Id
-    @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
     
     private Long userId;
@@ -19,6 +18,7 @@ public class Loan {
     private LocalDate startDate;
     private String lender;
     private String type; // Home, Car, Personal, Credit Card, Education, Friend, Other
+    private String prepayPriority = "MEDIUM"; // HIGH, MEDIUM, LOW, EXCLUDE
 
     // Getters and Setters
     public Long getId() { return id; }
@@ -41,4 +41,6 @@ public class Loan {
     public void setLender(String lender) { this.lender = lender; }
     public String getType() { return type; }
     public void setType(String type) { this.type = type; }
+    public String getPrepayPriority() { return prepayPriority; }
+    public void setPrepayPriority(String prepayPriority) { this.prepayPriority = prepayPriority; }
 }
