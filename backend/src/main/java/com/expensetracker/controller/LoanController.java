@@ -111,10 +111,10 @@ public class LoanController {
         }
         
         // Simple EMI calculation if not provided
-        if (loan.getEmi() == null || loan.getEmi() <= 0) {
+        if (loan.getEmi() == null) {
             double p = loan.getPrincipal();
-            double r = (loan.getRate() / 100.0) / 12.0;
-            int n = loan.getTenure();
+            double r = loan.getRate() != null ? (loan.getRate() / 100.0) / 12.0 : 0.0;
+            int n = loan.getTenure() != null && loan.getTenure() > 0 ? loan.getTenure() : 1;
             if (r > 0) {
                 double emi = (p * r * Math.pow(1 + r, n)) / (Math.pow(1 + r, n) - 1);
                 loan.setEmi(Math.round(emi * 100.0) / 100.0);
@@ -429,7 +429,7 @@ public class LoanController {
         if (loan.getUserId() == null) missing.add("userId");
         if (loan.getName() == null || loan.getName().isBlank()) missing.add("name");
         if (loan.getPrincipal() == null || loan.getPrincipal() <= 0) missing.add("principal");
-        if (loan.getEmi() == null || loan.getEmi() <= 0) missing.add("emi");
+        if (loan.getEmi() == null || loan.getEmi() < 0) missing.add("emi");
         if (loan.getLender() == null || loan.getLender().isBlank()) missing.add("lender");
         if (loan.getType() == null || loan.getType().isBlank()) missing.add("type");
         return missing;

@@ -78,7 +78,7 @@ interface EmiPayment {
 }
 
 interface Loan {
-  id?: number;
+  id: number;
   userId: number;
   name: string;
   principal: number;
@@ -117,10 +117,19 @@ interface Budget {
   monthlyLimit: number;
 }
 
+interface LoanSnapshot {
+  name: string;
+  interestAccrued: number;
+  minPaid: number;
+  extraPaid: number;
+  remaining: number;
+}
+
 interface ProjectionPoint {
   month: string;
   balance: number;
   payment: number;
+  details?: LoanSnapshot[];
 }
 
 interface StrategyResult {
@@ -183,7 +192,7 @@ export default function App() {
   });
   
   const [isSimpleLoan, setIsSimpleLoan] = useState<boolean>(false);
-  const [loanRegistrationMode, setLoanRegistrationMode] = useState<'standard' | 'simple' | 'slice'>('standard');
+  const [loanRegistrationMode, setLoanRegistrationMode] = useState<'standard' | 'simple' | 'slice' | 'flexible'>('standard');
   const [sliceStartMonth, setSliceStartMonth] = useState<string>('2026-06');
   const [sliceTenure, setSliceTenure] = useState<string>('6');
   const [sliceAmounts, setSliceAmounts] = useState<Record<string, string>>({});
@@ -237,6 +246,8 @@ export default function App() {
   const toggleLoanCollapse = (id: number) => {
     setCollapsedLoanIds(prev => ({ ...prev, [id]: !prev[id] }));
   };
+  const [selectedStrategy, setSelectedStrategy] = useState<'Avalanche' | 'Snowball' | 'Balanced' | 'Baseline'>('Avalanche');
+  const [showAllSimMonths, setShowAllSimMonths] = useState<boolean>(false);
 
   const getPriorityBadge = (priority?: string) => {
     switch (priority) {
@@ -696,7 +707,7 @@ Be generous in interpretation. "joining bonus", "sign-on bonus", "relocation all
         rate: lw.loan.rate,
         emi: lw.loan.emi,
         prepayPriority: lw.loan.prepayPriority || 'MEDIUM'
-      })).filter(l => l.balance > 0);
+      })).filter(l => l.balance > 0 && !(l.emi === 0 && l.prepayPriority === 'EXCLUDE'));
 
       if (localLoans.length === 0) {
         return {
@@ -745,24 +756,37 @@ Be generous in interpretation. "joining bonus", "sign-on bonus", "relocation all
         }
 
         // 1. Accrue Interest
+        const interestPaid: Record<string, number> = {};
         for (const l of localLoans) {
           if (l.balance > 0) {
             const interest = l.balance * ((l.rate / 100) / 12);
             l.balance += interest;
             totalInterest += interest;
+            interestPaid[l.name] = interest;
+          } else {
+            interestPaid[l.name] = 0;
           }
         }
 
         // 2. Pay Minimums
+        const minPayments: Record<string, number> = {};
         for (const l of localLoans) {
           if (l.balance > 0) {
             const minPay = Math.min(l.balance, l.emi);
             l.balance -= minPay;
             monthTotalPaid += minPay;
+            minPayments[l.name] = minPay;
+          } else {
+            minPayments[l.name] = 0;
           }
         }
 
         // 3. Priority Allocation
+        const extraPayments: Record<string, number> = {};
+        for (const l of localLoans) {
+          extraPayments[l.name] = 0;
+        }
+
         if (activeExtra > 0) {
           if (strategy === 'Avalanche') {
             localLoans.sort((a, b) => {
@@ -797,6 +821,7 @@ Be generous in interpretation. "joining bonus", "sign-on bonus", "relocation all
                 l.balance -= paid;
                 monthTotalPaid += paid;
                 extraPaid += paid;
+                extraPayments[l.name] = (extraPayments[l.name] || 0) + paid;
               }
               activeExtra = Math.max(0, activeExtra - extraPaid);
             }
@@ -809,16 +834,27 @@ Be generous in interpretation. "joining bonus", "sign-on bonus", "relocation all
                 l.balance -= paid;
                 monthTotalPaid += paid;
                 activeExtra -= paid;
+                extraPayments[l.name] = (extraPayments[l.name] || 0) + paid;
               }
             }
           }
         }
 
         const remaining = localLoans.reduce((sum, l) => sum + (l.balance > 0 ? l.balance : 0), 0);
+        
+        const loanSnapshots = localLoans.map(l => ({
+          name: l.name,
+          interestAccrued: interestPaid[l.name] || 0,
+          minPaid: minPayments[l.name] || 0,
+          extraPaid: extraPayments[l.name] || 0,
+          remaining: Math.max(0, Math.round(l.balance))
+        }));
+
         points.push({
           month: currentMonthDate.toLocaleDateString('en-US', { month: 'short', year: 'numeric' }),
           balance: Math.max(0, Math.round(remaining)),
-          payment: Math.round(monthTotalPaid)
+          payment: Math.round(monthTotalPaid),
+          details: loanSnapshots
         });
 
         if (remaining <= 0) break;
@@ -1043,6 +1079,72 @@ Be generous in interpretation. "joining bonus", "sign-on bonus", "relocation all
   const handleAddLoan = async (e: React.FormEvent) => {
     e.preventDefault();
 
+    if (loanRegistrationMode === 'flexible') {
+      const principalVal = parseFloat(newLoan.principal) || 0;
+      if (!newLoan.name || principalVal <= 0) return;
+
+      const loanPayload = {
+        userId: 1,
+        name: newLoan.name,
+        principal: principalVal,
+        rate: 0.0,
+        tenure: 1,
+        emi: 0.0, // 0.0 emi = flexible!
+        lender: newLoan.lender || 'Private Lender',
+        type: newLoan.type || 'Friend',
+        startDate: new Date().toISOString().split('T')[0],
+        prepayPriority: newLoan.prepayPriority || 'EXCLUDE'
+      };
+
+      if (isUsingFallback) {
+        const addedLoan: Loan = {
+          id: Date.now(),
+          userId: 1,
+          name: loanPayload.name,
+          principal: principalVal,
+          rate: 0.0,
+          tenure: 1,
+          emi: 0.0,
+          startDate: loanPayload.startDate,
+          lender: loanPayload.lender,
+          type: loanPayload.type,
+          prepayPriority: loanPayload.prepayPriority
+        };
+
+        const generatedPayments: EmiPayment[] = [{
+          id: Date.now() + 1000,
+          loanId: addedLoan.id,
+          dueDate: loanPayload.startDate,
+          paidDate: null,
+          amount: principalVal,
+          isPaid: false
+        }];
+
+        const updated = [...loansWithPayments, { loan: addedLoan, payments: generatedPayments }];
+        setLoansWithPayments(updated);
+        localStorage.setItem('loans', JSON.stringify(updated));
+        calculateAiProjectionsLocal();
+      } else {
+        await fetch(`${API_BASE}/loans/from-schedule`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ 
+            loan: loanPayload, 
+            payments: [{
+              dueDate: loanPayload.startDate,
+              paidDate: null,
+              amount: principalVal,
+              isPaid: false
+            }] 
+          })
+        });
+        loadAllData();
+      }
+
+      setNewLoan({ name: '', principal: '', rate: '', tenure: '', emi: '', lender: '', type: 'Home', prepayPriority: 'MEDIUM' });
+      return;
+    }
+
     if (loanRegistrationMode === 'slice') {
       const tenureVal = parseInt(sliceTenure) || 0;
       if (!newLoan.name || tenureVal <= 0) return;
@@ -1115,7 +1217,7 @@ Be generous in interpretation. "joining bonus", "sign-on bonus", "relocation all
       }
 
       // Reset form
-      setNewLoan({ name: '', principal: '', rate: '', tenure: '', emi: '', lender: '', type: 'Home' });
+      setNewLoan({ name: '', principal: '', rate: '', tenure: '', emi: '', lender: '', type: 'Home', prepayPriority: 'MEDIUM' });
       setSliceAmounts({});
       return;
     }
@@ -1199,7 +1301,8 @@ Be generous in interpretation. "joining bonus", "sign-on bonus", "relocation all
       tenure: String(detected.tenure || result.payments.length || ''),
       emi: String(detected.emi || ''),
       lender: String(detected.lender || ''),
-      type: String(detected.type || 'Home')
+      type: String(detected.type || 'Home'),
+      prepayPriority: 'MEDIUM'
     });
   };
 
@@ -1758,7 +1861,7 @@ Be generous in interpretation. "joining bonus", "sign-on bonus", "relocation all
                     setLoansWithPayments([added]);
                   }
                   setOnboardStep(4);
-                  setNewLoan({ name: '', principal: '', rate: '', tenure: '', emi: '', lender: '', type: 'Home' });
+                  setNewLoan({ name: '', principal: '', rate: '', tenure: '', emi: '', lender: '', type: 'Home', prepayPriority: 'MEDIUM' });
                 }}>Next Step <ChevronRight size={16} /></button>
               </div>
             </div>
@@ -2321,6 +2424,28 @@ Be generous in interpretation. "joining bonus", "sign-on bonus", "relocation all
                   >
                     💳 Slice/Custom
                   </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setLoanRegistrationMode('flexible');
+                      setIsSimpleLoan(false);
+                      setNewLoan(prev => ({ ...prev, type: 'Friend', prepayPriority: 'EXCLUDE' }));
+                    }}
+                    style={{
+                      flex: 1,
+                      padding: '0.5rem',
+                      borderRadius: '8px',
+                      border: 'none',
+                      background: loanRegistrationMode === 'flexible' ? 'var(--primary)' : 'transparent',
+                      color: 'white',
+                      fontSize: '0.8rem',
+                      fontWeight: 600,
+                      cursor: 'pointer',
+                      transition: 'var(--transition-smooth)'
+                    }}
+                  >
+                    🤝 Informal (Pay Anytime)
+                  </button>
                 </div>
 
                 <form onSubmit={handleAddLoan} style={{ display: 'flex', flexDirection: 'column', gap: '1rem', marginTop: '0.5rem' }}>
@@ -2430,6 +2555,31 @@ Be generous in interpretation. "joining bonus", "sign-on bonus", "relocation all
                         required
                       />
                     </div>
+                  ) : loanRegistrationMode === 'flexible' ? (
+                    <>
+                      <input 
+                        type="number" 
+                        placeholder="Total Borrowed Amount (Principal) (₹)" 
+                        value={newLoan.principal}
+                        onChange={(e) => setNewLoan({ ...newLoan, principal: e.target.value })}
+                        required
+                      />
+                      <div style={{ display: 'flex', gap: '1rem' }}>
+                        <select 
+                          value={newLoan.type}
+                          onChange={(e) => setNewLoan({ ...newLoan, type: e.target.value })}
+                          style={{ width: '100%' }}
+                        >
+                          <option value="Friend">🤝 Friend/Relative</option>
+                          <option value="Personal">💳 Personal Loan</option>
+                          <option value="Home">🏠 Home Loan</option>
+                          <option value="Car">🚗 Car Loan</option>
+                        </select>
+                      </div>
+                      <p style={{ margin: 0, fontSize: '0.82rem', color: 'var(--text-muted)', lineHeight: '1.5', marginTop: '0.25rem' }}>
+                        ℹ️ <strong>No monthly EMI or tenure required:</strong> This tab is designed for informal debts (like from <strong>Ankit, Nithin, or Param</strong>) where you only enter the amount. You can repay them slowly in small chunks or in full at any time, completely at your convenience.
+                      </p>
+                    </>
                   ) : (
                     <>
                       <div style={{ display: 'flex', gap: '1rem' }}>
@@ -2473,7 +2623,7 @@ Be generous in interpretation. "joining bonus", "sign-on bonus", "relocation all
                     </>
                   )}
 
-                  {loanRegistrationMode !== 'slice' && (
+                  {loanRegistrationMode !== 'slice' && loanRegistrationMode !== 'flexible' && (
                     <div style={{ display: 'flex', gap: '1rem' }}>
                       <select 
                         value={newLoan.type}
@@ -2640,6 +2790,16 @@ Be generous in interpretation. "joining bonus", "sign-on bonus", "relocation all
                     const isEditing = editingLoanId === lw.loan.id;
                     const isCollapsed = collapsedLoanIds[lw.loan.id];
                     const monthsLeft = lw.payments.filter(p => !p.isPaid).length;
+                    const isFlexibleLoan = lw.loan.emi === 0;
+                    const hasRemainingBalance = remainingBalance > 0;
+                    const hasRate = lw.loan.rate > 0;
+                    const hasEmiAndRate = lw.loan.rate > 0 && lw.loan.emi > 0;
+                    const paidAmount = lw.loan.principal - remainingBalance;
+                    const paidAmtPct = lw.loan.principal > 0 ? Math.round((paidAmount / lw.loan.principal) * 100) : 0;
+                    const progressLabel = isFlexibleLoan
+                      ? `Anytime Payoff Progress: ${userProfile.currency}${paidAmount.toLocaleString()} of ${userProfile.currency}${lw.loan.principal.toLocaleString()} paid`
+                      : `EMI progress: ${paidCount}/${totalCount} payments ticked`;
+                    const progressPct = isFlexibleLoan ? paidAmtPct : pct;
                     
                     return (
                       <div key={lw.loan.id} style={{ 
@@ -2817,7 +2977,9 @@ Be generous in interpretation. "joining bonus", "sign-on bonus", "relocation all
                               <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }} onClick={(e) => e.stopPropagation()}>
                                 <div style={{ textAlign: 'right' }}>
                                   <div style={{ fontWeight: 700, color: 'var(--success)' }}>{userProfile.currency}{remainingBalance.toLocaleString()} left</div>
-                                  <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>EMI: {userProfile.currency}{lw.loan.emi.toLocaleString()}</div>
+                                  <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                                    {lw.loan.emi === 0 ? 'Flexible (No EMI)' : `EMI: ${userProfile.currency}${lw.loan.emi.toLocaleString()}`}
+                                  </div>
                                 </div>
                                 <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
                                   <button 
@@ -2858,10 +3020,10 @@ Be generous in interpretation. "joining bonus", "sign-on bonus", "relocation all
                               <>
                                 <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', display: 'flex', flexDirection: 'column', gap: '0.25rem', marginTop: '0.5rem', borderTop: '1px solid rgba(255,255,255,0.03)', paddingTop: '0.5rem' }}>
                                   <span style={{ color: 'var(--text-main)', fontWeight: 600 }}>💰 Amount Borrowed: {userProfile.currency}{lw.loan.principal.toLocaleString()}</span>
-                                  {lw.loan.rate > 0 && (
+                                  {hasRate && (
                                     <span style={{ color: 'var(--warning)', fontWeight: 500 }}>📈 Interest Rate: {lw.loan.rate}% p.a.</span>
                                   )}
-                                  {lw.loan.rate > 0 && lw.loan.emi > 0 && (
+                                  {hasEmiAndRate && (
                                     <span style={{ color: 'var(--text-dimmed)' }}>
                                       Scheduled Total Interest Cost: {userProfile.currency}{Math.max(0, Math.round((lw.loan.emi * lw.loan.tenure) - lw.loan.principal)).toLocaleString()}
                                     </span>
@@ -2871,11 +3033,11 @@ Be generous in interpretation. "joining bonus", "sign-on bonus", "relocation all
                                 {/* Progress Bar */}
                                 <div style={{ marginBottom: '1rem', marginTop: '1rem' }}>
                                   <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: '0.35rem' }}>
-                                    <span>EMI progress: {paidCount}/{totalCount} payments ticked</span>
-                                    <span>{pct}% Paid</span>
+                                    <span>{progressLabel}</span>
+                                    <span>{progressPct}% Paid</span>
                                   </div>
                                   <div style={{ width: '100%', height: '8px', background: 'rgba(255,255,255,0.05)', borderRadius: '4px', overflow: 'hidden' }}>
-                                    <div style={{ height: '100%', width: `${pct}%`, background: 'linear-gradient(90deg, var(--success), #059669)', borderRadius: '4px' }}></div>
+                                    <div style={{ height: '100%', width: `${progressPct}%`, background: 'linear-gradient(90deg, var(--success), #059669)', borderRadius: '4px' }}></div>
                                   </div>
                                 </div>
                               </>
@@ -2885,82 +3047,106 @@ Be generous in interpretation. "joining bonus", "sign-on bonus", "relocation all
 
                         {!isCollapsed && (
                           <div>
-                            <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)', display: 'block', marginBottom: '0.5rem', marginTop: '1rem' }}>EMI Installment Overview Grid (Tick to clear):</span>
-                            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem', maxHeight: '110px', overflowY: 'auto', paddingRight: '0.5rem', marginBottom: '1.25rem' }}>
-                              {lw.payments.map((p, idx) => (
-                                <label key={p.id} className="emi-checkbox-container" title={`Due: ${p.dueDate}`}>
-                                  <input 
-                                    type="checkbox" 
-                                    className="emi-checkbox-input"
-                                    checked={p.isPaid}
-                                    onChange={() => handleToggleEmiPayment(lw.loan.id, p.id, p.isPaid)}
-                                  />
-                                  <span className="emi-checkbox-custom" style={{ 
-                                    background: p.isPaid ? '' : 'rgba(255,255,255,0.03)',
-                                    borderColor: p.isPaid ? '' : 'rgba(255,255,255,0.1)'
-                                  }}>
-                                    {p.isPaid ? '✓' : idx + 1}
-                                  </span>
-                                </label>
-                              ))}
-                            </div>
+                            {!isFlexibleLoan && (
+                              <>
+                                <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)', display: 'block', marginBottom: '0.5rem', marginTop: '1rem' }}>EMI Installment Overview Grid (Tick to clear):</span>
+                                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem', maxHeight: '110px', overflowY: 'auto', paddingRight: '0.5rem', marginBottom: '1.25rem' }}>
+                                  {lw.payments.map((p, idx) => (
+                                    <label key={p.id} className="emi-checkbox-container" title={`Due: ${p.dueDate}`}>
+                                      <input 
+                                        type="checkbox" 
+                                        className="emi-checkbox-input"
+                                        checked={p.isPaid}
+                                        onChange={() => handleToggleEmiPayment(lw.loan.id, p.id, p.isPaid)}
+                                      />
+                                      <span className="emi-checkbox-custom" style={{ 
+                                        background: p.isPaid ? '' : 'rgba(255,255,255,0.03)',
+                                        borderColor: p.isPaid ? '' : 'rgba(255,255,255,0.1)'
+                                      }}>
+                                        {p.isPaid ? '✓' : idx + 1}
+                                      </span>
+                                    </label>
+                                  ))}
+                                </div>
+                              </>
+                            )}
 
-                            {/* Variable EMI Upcoming adjustments */}
-                            <div style={{ background: 'rgba(255,255,255,0.02)', padding: '1rem', borderRadius: '12px', border: '1px solid rgba(255,255,255,0.04)' }}>
-                              <span style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--primary)', display: 'flex', alignItems: 'center', gap: '0.35rem', marginBottom: '0.75rem' }}>
-                                <Sparkles size={14} /> Variable Installment Adjuster (All Months)
-                              </span>
-                              <div style={{ 
-                                display: 'flex', 
-                                flexDirection: 'column', 
-                                gap: '0.75rem',
-                                maxHeight: '260px',
-                                overflowY: 'auto',
-                                paddingRight: '0.5rem'
-                              }}>
-                                {lw.payments.filter(p => !p.isPaid).map((p) => {
-                                  const idx = lw.payments.findIndex(item => item.id === p.id);
-                                  return (
-                                    <div key={p.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.85rem' }}>
-                                      <span style={{ fontWeight: 500 }}>Month #{idx + 1} ({new Date(p.dueDate).toLocaleDateString('en-US', { month: 'short', year: 'numeric' })})</span>
-                                      
-                                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-                                        <div style={{ position: 'relative', width: '110px' }}>
-                                          <span style={{ position: 'absolute', left: '0.6rem', top: '50%', transform: 'translateY(-50%)', fontSize: '0.8rem', color: 'var(--text-muted)' }}>₹</span>
-                                          <input 
-                                            type="number" 
-                                            defaultValue={p.amount}
-                                            onBlur={(e) => handleUpdateEmiAmount(lw.loan.id, p.id, parseFloat(e.target.value))}
-                                            onKeyDown={(e) => {
-                                              if (e.key === 'Enter') {
-                                                handleUpdateEmiAmount(lw.loan.id, p.id, parseFloat((e.target as HTMLInputElement).value));
-                                                (e.target as HTMLInputElement).blur();
+                            {isFlexibleLoan && (
+                              <div style={{ background: 'rgba(255,255,255,0.02)', padding: '1rem', borderRadius: '12px', border: '1px solid rgba(255,255,255,0.04)', marginTop: '1rem' }}>
+                                <span style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--primary)', display: 'flex', alignItems: 'center', gap: '0.35rem', marginBottom: '0.75rem' }}>
+                                  <Sparkles size={14} /> Flexible Anytime Repayment Controller (Pay Slowly or in Full)
+                                </span>
+                                
+                                {hasRemainingBalance ? (
+                                  <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+                                    <p style={{ margin: 0, fontSize: '0.8rem', color: 'var(--text-muted)', lineHeight: '1.4' }}>
+                                      💡 Ankit, Nithin, and Param loans are <strong>flexible, non-mandatory debts</strong> with ₹0 required monthly EMI. Type any payment amount below and press Enter/blur to record repayment, or close it entirely in a single go.
+                                    </p>
+                                    
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginTop: '0.25rem' }}>
+                                      <div style={{ position: 'relative', width: '150px' }}>
+                                        <span style={{ position: 'absolute', left: '0.6rem', top: '50%', transform: 'translateY(-50%)', fontSize: '0.8rem', color: 'var(--text-muted)' }}>₹</span>
+                                        <input 
+                                          type="number" 
+                                          placeholder="Prepay Amount (₹)"
+                                          onBlur={(evt) => {
+                                            const val = parseFloat(evt.target.value);
+                                            if (isNaN(val) || val <= 0) return;
+                                            const unpaid = lw.payments.find(p => !p.isPaid);
+                                            if (unpaid) {
+                                              if (val >= remainingBalance) {
+                                                handleToggleEmiPayment(lw.loan.id, unpaid.id, false);
+                                              } else {
+                                                handleUpdateEmiAmount(lw.loan.id, unpaid.id, remainingBalance - val);
                                               }
-                                            }}
-                                            style={{ width: '100%', padding: '0.35rem 0.5rem 0.35rem 1.25rem', fontSize: '0.85rem', borderRadius: '8px' }}
-                                            title="Click to change variable paid amount for this month"
-                                          />
-                                        </div>
-                                        <button 
-                                          className="btn btn-primary" 
-                                          style={{ padding: '0.35rem 0.75rem', fontSize: '0.8rem', borderRadius: '8px' }}
-                                          onClick={() => handleToggleEmiPayment(lw.loan.id, p.id, false)}
-                                        >
-                                          Mark Paid
-                                        </button>
+                                            }
+                                            evt.target.value = '';
+                                          }}
+                                          onKeyDown={(evt) => {
+                                            if (evt.key === 'Enter') {
+                                              const target = evt.target as HTMLInputElement;
+                                              const val = parseFloat(target.value);
+                                              if (isNaN(val) || val <= 0) return;
+                                              const unpaid = lw.payments.find(p => !p.isPaid);
+                                              if (unpaid) {
+                                                if (val >= remainingBalance) {
+                                                  handleToggleEmiPayment(lw.loan.id, unpaid.id, false);
+                                                } else {
+                                                  handleUpdateEmiAmount(lw.loan.id, unpaid.id, remainingBalance - val);
+                                                }
+                                              }
+                                              target.value = '';
+                                              target.blur();
+                                            }
+                                          }}
+                                          style={{ width: '100%', padding: '0.35rem 0.5rem 0.35rem 1.25rem', fontSize: '0.85rem', borderRadius: '8px' }}
+                                          title="Type paid amount to subtract from flexible outstanding debt"
+                                        />
                                       </div>
+                                      
+                                      <button 
+                                        className="btn btn-primary" 
+                                        style={{ padding: '0.35rem 0.75rem', fontSize: '0.8rem', borderRadius: '8px' }}
+                                        onClick={() => {
+                                          const unpaid = lw.payments.find(p => !p.isPaid);
+                                          if (unpaid) {
+                                            handleToggleEmiPayment(lw.loan.id, unpaid.id, false);
+                                          }
+                                        }}
+                                      >
+                                        Close Debt in Full
+                                      </button>
                                     </div>
-                                  );
-                                })}
-                                {lw.payments.filter(p => !p.isPaid).length === 0 && (
-                                  <div style={{ fontSize: '0.8rem', color: 'var(--success)', textAlign: 'center', padding: '0.5rem' }}>🎉 Outstanding debt fully paid off!</div>
+                                  </div>
+                                ) : (
+                                  <div style={{ fontSize: '0.8rem', color: 'var(--success)', textAlign: 'center', padding: '0.5rem' }}>🎉 Flexible debt fully paid off!</div>
                                 )}
                               </div>
-                            </div>
+                            )}
                           </div>
                         )}
                       </div>
-                    );
+                      );
                   })}
                 </div>
               </div>
@@ -3195,32 +3381,71 @@ Be generous in interpretation. "joining bonus", "sign-on bonus", "relocation all
                 {aiAnalysis && (
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem', marginTop: '1.25rem' }}>
                     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '1rem' }}>
-                      <div style={{ padding: '1rem', background: 'rgba(168, 85, 247, 0.08)', border: '1px solid rgba(168, 85, 247, 0.15)', borderRadius: '12px', textAlign: 'center' }}>
+                      <div 
+                        onClick={() => { setSelectedStrategy('Avalanche'); setShowAllSimMonths(false); }}
+                        style={{ 
+                          padding: '1rem', 
+                          background: 'rgba(168, 85, 247, 0.08)', 
+                          border: selectedStrategy === 'Avalanche' ? '2px solid var(--primary)' : '1px solid rgba(168, 85, 247, 0.15)', 
+                          borderRadius: '12px', 
+                          textAlign: 'center',
+                          cursor: 'pointer',
+                          boxShadow: selectedStrategy === 'Avalanche' ? '0 0 15px rgba(168, 85, 247, 0.3)' : 'none',
+                          transition: 'all 0.3s ease',
+                          userSelect: 'none'
+                        }}
+                      >
                         <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>Avalanche Saved</div>
                         <div style={{ fontSize: '1.3rem', fontWeight: 800, color: 'var(--primary)', marginTop: '0.25rem' }}>
                           {userProfile.currency}{aiAnalysis.avalanche.interestSaved.toLocaleString()}
                         </div>
-                        <div style={{ fontSize: '0.75rem', color: '#10b981', marginTop: '0.25rem' }}>
+                        <div style={{ fontSize: '0.75rem', color: '#10b981', marginTop: '0.25rem', fontWeight: 600 }}>
                           {aiAnalysis.avalanche.monthsSaved} Months Faster!
                         </div>
                       </div>
 
-                      <div style={{ padding: '1rem', background: 'rgba(99, 102, 241, 0.08)', border: '1px solid rgba(99, 102, 241, 0.15)', borderRadius: '12px', textAlign: 'center' }}>
+                      <div 
+                        onClick={() => { setSelectedStrategy('Snowball'); setShowAllSimMonths(false); }}
+                        style={{ 
+                          padding: '1rem', 
+                          background: 'rgba(99, 102, 241, 0.08)', 
+                          border: selectedStrategy === 'Snowball' ? '2px solid var(--secondary)' : '1px solid rgba(99, 102, 241, 0.15)', 
+                          borderRadius: '12px', 
+                          textAlign: 'center',
+                          cursor: 'pointer',
+                          boxShadow: selectedStrategy === 'Snowball' ? '0 0 15px rgba(99, 102, 241, 0.3)' : 'none',
+                          transition: 'all 0.3s ease',
+                          userSelect: 'none'
+                        }}
+                      >
                         <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>Snowball Saved</div>
                         <div style={{ fontSize: '1.3rem', fontWeight: 800, color: 'var(--secondary)', marginTop: '0.25rem' }}>
                           {userProfile.currency}{aiAnalysis.snowball.interestSaved.toLocaleString()}
                         </div>
-                        <div style={{ fontSize: '0.75rem', color: '#10b981', marginTop: '0.25rem' }}>
+                        <div style={{ fontSize: '0.75rem', color: '#10b981', marginTop: '0.25rem', fontWeight: 600 }}>
                           {aiAnalysis.snowball.monthsSaved} Months Faster!
                         </div>
                       </div>
 
-                      <div style={{ padding: '1rem', background: 'rgba(236, 72, 153, 0.08)', border: '1px solid rgba(236, 72, 153, 0.15)', borderRadius: '12px', textAlign: 'center' }}>
+                      <div 
+                        onClick={() => { setSelectedStrategy('Balanced'); setShowAllSimMonths(false); }}
+                        style={{ 
+                          padding: '1rem', 
+                          background: 'rgba(236, 72, 153, 0.08)', 
+                          border: selectedStrategy === 'Balanced' ? '2px solid var(--accent)' : '1px solid rgba(236, 72, 153, 0.15)', 
+                          borderRadius: '12px', 
+                          textAlign: 'center',
+                          cursor: 'pointer',
+                          boxShadow: selectedStrategy === 'Balanced' ? '0 0 15px rgba(236, 72, 153, 0.3)' : 'none',
+                          transition: 'all 0.3s ease',
+                          userSelect: 'none'
+                        }}
+                      >
                         <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>Balanced Saved</div>
                         <div style={{ fontSize: '1.3rem', fontWeight: 800, color: 'var(--accent)', marginTop: '0.25rem' }}>
                           {userProfile.currency}{aiAnalysis.balanced.interestSaved.toLocaleString()}
                         </div>
-                        <div style={{ fontSize: '0.75rem', color: '#10b981', marginTop: '0.25rem' }}>
+                        <div style={{ fontSize: '0.75rem', color: '#10b981', marginTop: '0.25rem', fontWeight: 600 }}>
                           {aiAnalysis.balanced.monthsSaved} Months Faster!
                         </div>
                       </div>
@@ -3296,6 +3521,181 @@ Be generous in interpretation. "joining bonus", "sign-on bonus", "relocation all
                         <Info size={16} /> Financial Advisory Strategy Note
                       </div>
                       <div dangerouslySetInnerHTML={{ __html: aiAnalysis.advice.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>').replace(/\n/g, '<br/>') }} />
+                    </div>
+
+                    {/* Dynamic Strategy Repayment Waterfall Breakdown */}
+                    <div className="premium-card" style={{ border: '1px solid rgba(255,255,255,0.06)', borderRadius: '16px', background: 'rgba(255,255,255,0.01)', boxShadow: '0 4px 30px rgba(0,0,0,0.15)', marginTop: '2rem' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem', flexWrap: 'wrap', gap: '0.75rem' }}>
+                        <div>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: 'var(--primary)', fontWeight: 700 }}>
+                            <Sparkles size={16} /> 🔍 Payoff Ledger Waterfall
+                          </div>
+                          <h3 style={{ margin: '0.25rem 0 0', fontSize: '1.25rem' }}>Repayment Waterfall Timeline: {selectedStrategy} Strategy</h3>
+                          <p style={{ margin: 0, fontSize: '0.8rem', color: 'var(--text-muted)' }}>
+                            Active Simulation details of payments made to each individual account.
+                          </p>
+                        </div>
+                        <div style={{ display: 'flex', gap: '0.4rem', background: 'rgba(255,255,255,0.02)', padding: '0.25rem', borderRadius: '10px', border: '1px solid rgba(255,255,255,0.05)' }}>
+                          {(['Avalanche', 'Snowball', 'Balanced', 'Baseline'] as const).map(strat => (
+                            <button
+                              key={strat}
+                              className={`btn ${selectedStrategy === strat ? 'btn-primary' : 'btn-secondary'}`}
+                              style={{ 
+                                padding: '0.35rem 0.75rem', 
+                                fontSize: '0.78rem', 
+                                borderRadius: '8px',
+                                background: selectedStrategy === strat ? '' : 'transparent',
+                                border: selectedStrategy === strat ? '' : 'none',
+                                color: selectedStrategy === strat ? '' : 'var(--text-muted)'
+                              }}
+                              onClick={() => { setSelectedStrategy(strat); setShowAllSimMonths(false); }}
+                            >
+                              {strat}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+                        {(() => {
+                          const stratRes = 
+                            selectedStrategy === 'Avalanche' ? aiAnalysis.avalanche :
+                            selectedStrategy === 'Snowball' ? aiAnalysis.snowball :
+                            selectedStrategy === 'Balanced' ? aiAnalysis.balanced :
+                            aiAnalysis.baseline;
+
+                          if (!stratRes || !stratRes.projection || stratRes.projection.length <= 1) {
+                            return <div style={{ fontSize: '0.85rem', color: 'var(--text-dimmed)', textAlign: 'center', padding: '1rem' }}>No active payoff projection available.</div>;
+                          }
+
+                          const simulatedMonths = stratRes.projection.slice(1); // skip initial starting point
+                          const limit = showAllSimMonths ? simulatedMonths.length : 12;
+
+                          return (
+                            <>
+                              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.85rem' }}>
+                                {simulatedMonths.slice(0, limit).map((point, idx) => {
+                                  return (
+                                    <div 
+                                      key={point.month} 
+                                      className="premium-card" 
+                                      style={{ 
+                                        padding: '1rem', 
+                                        background: 'rgba(255,255,255,0.01)', 
+                                        border: '1px solid rgba(255,255,255,0.03)', 
+                                        borderRadius: '12px',
+                                        display: 'flex',
+                                        flexDirection: 'column',
+                                        gap: '0.85rem'
+                                      }}
+                                    >
+                                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.5rem', borderBottom: '1px solid rgba(255,255,255,0.03)', paddingBottom: '0.5rem' }}>
+                                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.65rem' }}>
+                                          <span style={{ 
+                                            background: selectedStrategy === 'Avalanche' ? 'rgba(168,85,247,0.12)' : selectedStrategy === 'Snowball' ? 'rgba(99,102,241,0.12)' : selectedStrategy === 'Balanced' ? 'rgba(236,72,153,0.12)' : 'rgba(156,163,175,0.12)', 
+                                            color: selectedStrategy === 'Avalanche' ? 'var(--primary)' : selectedStrategy === 'Snowball' ? 'var(--secondary)' : selectedStrategy === 'Balanced' ? 'var(--accent)' : 'var(--text-muted)', 
+                                            padding: '0.2rem 0.5rem', 
+                                            borderRadius: '6px', 
+                                            fontSize: '0.75rem', 
+                                            fontWeight: 700 
+                                          }}>
+                                            Month #{idx + 1}
+                                          </span>
+                                          <span style={{ fontWeight: 700, fontSize: '0.95rem' }}>{point.month}</span>
+                                        </div>
+                                        
+                                        <div style={{ display: 'flex', gap: '1.25rem', fontSize: '0.85rem' }}>
+                                          <div>
+                                            <span style={{ color: 'var(--text-muted)' }}>Paid: </span>
+                                            <span style={{ fontWeight: 700, color: 'var(--success)' }}>{userProfile.currency}{point.payment.toLocaleString()}</span>
+                                          </div>
+                                          <div>
+                                            <span style={{ color: 'var(--text-muted)' }}>Outstanding: </span>
+                                            <span style={{ fontWeight: 700, color: '#fbbf24' }}>{userProfile.currency}{point.balance.toLocaleString()}</span>
+                                          </div>
+                                        </div>
+                                      </div>
+
+                                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: '0.75rem' }}>
+                                        {point.details?.map(snap => {
+                                          const paid = snap.minPaid + snap.extraPaid;
+                                          if (paid <= 0 && snap.remaining <= 0) return null; // cleared earlier
+
+                                          return (
+                                            <div 
+                                              key={snap.name} 
+                                              style={{ 
+                                                background: 'rgba(255,255,255,0.01)', 
+                                                border: '1px solid rgba(255,255,255,0.03)', 
+                                                borderRadius: '10px', 
+                                                padding: '0.75rem',
+                                                display: 'flex',
+                                                flexDirection: 'column',
+                                                gap: '0.35rem'
+                                              }}
+                                            >
+                                              <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 600, fontSize: '0.85rem' }}>
+                                                <span>{snap.name}</span>
+                                                {snap.remaining === 0 && paid > 0 && (
+                                                  <span style={{ fontSize: '0.68rem', background: 'rgba(16,185,129,0.12)', color: '#34d399', padding: '0.05rem 0.35rem', borderRadius: '4px', fontWeight: 600 }}>
+                                                    🎉 Cleared
+                                                  </span>
+                                                )}
+                                              </div>
+                                              <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)', display: 'flex', flexDirection: 'column', gap: '0.15rem' }}>
+                                                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                                                  <span>Total Paid:</span>
+                                                  <strong style={{ color: paid > 0 ? 'var(--text-main)' : 'var(--text-dimmed)' }}>
+                                                    {userProfile.currency}{paid.toLocaleString()}
+                                                  </strong>
+                                                </div>
+                                                {snap.minPaid > 0 && (
+                                                  <div style={{ display: 'flex', justifyContent: 'space-between', paddingLeft: '0.5rem', fontSize: '0.72rem', opacity: 0.85 }}>
+                                                    <span>• Min EMI:</span>
+                                                    <span>{userProfile.currency}{snap.minPaid.toLocaleString()}</span>
+                                                  </div>
+                                                )}
+                                                {snap.extraPaid > 0 && (
+                                                  <div style={{ display: 'flex', justifyContent: 'space-between', paddingLeft: '0.5rem', fontSize: '0.72rem', opacity: 0.85, color: 'var(--primary)' }}>
+                                                    <span>• Prepayment:</span>
+                                                    <span style={{ fontWeight: 600 }}>+{userProfile.currency}{snap.extraPaid.toLocaleString()}</span>
+                                                  </div>
+                                                )}
+                                                {snap.interestAccrued > 0 && (
+                                                  <div style={{ display: 'flex', justifyContent: 'space-between', paddingLeft: '0.5rem', fontSize: '0.72rem', opacity: 0.75, color: 'var(--warning)' }}>
+                                                    <span>• Interest:</span>
+                                                    <span>+{userProfile.currency}{Math.round(snap.interestAccrued).toLocaleString()}</span>
+                                                  </div>
+                                                )}
+                                                <div style={{ display: 'flex', justifyContent: 'space-between', borderTop: '1px solid rgba(255,255,255,0.02)', paddingTop: '0.25rem', marginTop: '0.25rem' }}>
+                                                  <span>Remaining:</span>
+                                                  <span style={{ fontWeight: 600, color: snap.remaining > 0 ? 'var(--text-main)' : 'var(--text-dimmed)' }}>
+                                                    {userProfile.currency}{snap.remaining.toLocaleString()}
+                                                  </span>
+                                                </div>
+                                              </div>
+                                            </div>
+                                          );
+                                        })}
+                                      </div>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+
+                              {simulatedMonths.length > 12 && (
+                                <button
+                                  className="btn btn-secondary"
+                                  style={{ marginTop: '0.5rem', padding: '0.55rem', width: '100%', borderRadius: '10px', fontSize: '0.85rem' }}
+                                  onClick={() => setShowAllSimMonths(prev => !prev)}
+                                >
+                                  {showAllSimMonths ? 'Collapse timeline (First 12 Months)' : `Show Entire Payoff Timeline (${simulatedMonths.length} Months)`}
+                                </button>
+                              )}
+                            </>
+                          );
+                        })()}
+                      </div>
                     </div>
                   </div>
                 )}
