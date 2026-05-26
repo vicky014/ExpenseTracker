@@ -191,6 +191,14 @@ export default function App() {
   // Fallback indicator
   const [isUsingFallback, setIsUsingFallback] = useState<boolean>(false);
 
+  // Recalculate loading + NLP result display
+  const [isRecalculating, setIsRecalculating] = useState<boolean>(false);
+  const [nlpParsedResult, setNlpParsedResult] = useState<{ description: string; lumpSum: number; salaryHikePercent: number; extraMonthly: number } | null>(null);
+
+  // Income Inline Edit State
+  const [editingIncomeId, setEditingIncomeId] = useState<number | null>(null);
+  const [editIncomeForm, setEditIncomeForm] = useState<{ type: string; amount: string }>({ type: 'Salary', amount: '' });
+
   // API Seeding / Synchronizers
   useEffect(() => {
     loadAllData();
@@ -320,30 +328,122 @@ export default function App() {
     }
   };
 
-  // AI Payoff Math Projection Simulator
-  const calculateAiProjections = async () => {
-    if (isUsingFallback) {
-      calculateAiProjectionsLocal();
-      return;
-    }
+  // ── Claude LLM Intent Parser (runs client-side when API key is available) ──
+  const parseIntentWithLLM = async (text: string): Promise<{
+    lumpSum: number;
+    lumpSumMonthOffset: number;
+    extraMonthly: number;
+    salaryHikePercent: number;
+    description: string;
+  } | null> => {
+    const key = aiKey || localStorage.getItem('claude_api_key') || '';
+    if (!key || !key.startsWith('sk-ant-')) return null;
+
+    const systemPrompt = `You are a financial event extractor. Given a user's plain-English statement about their financial situation, extract structured parameters for a debt payoff simulation.
+
+Return ONLY a single line of valid JSON with these keys:
+- lumpSum: one-time cash inflow in rupees (0 if none)
+- lumpSumMonthOffset: months from now when lump sum arrives (1 if immediate/now/soon, else best estimate)
+- extraMonthly: extra monthly debt repayment amount in rupees (0 if none)
+- salaryHikePercent: percentage salary increase (0 if none, e.g. 25 for a 25% hike)
+- description: a short 1-line human-readable summary of what you understood
+
+Be generous in interpretation. "joining bonus", "sign-on bonus", "relocation allowance", "incentive", "FD maturity", "maturity", "received money" all count as lumpSum. "switch job", "new job", "increment", "appraisal", "hike", "raise", "promotion" imply salaryHikePercent. If no hike percentage is mentioned for a job switch, use 20 as a reasonable default. Numbers can appear anywhere — before or after keywords.`;
 
     try {
-      const res = await fetch(`${API_BASE}/ai/analyze`, {
+      const res = await fetch('https://api.anthropic.com/v1/messages', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': key,
+          'anthropic-version': '2023-06-01'
+        },
         body: JSON.stringify({
-          userId: 1,
-          extraMonthlyPayment: simExtraMonthly,
-          lumpSumPrepayment: simLumpSum,
-          salaryHikePercent: simSalaryHike,
-          customText: simCustomText
+          model: 'claude-haiku-20240307',
+          max_tokens: 256,
+          system: systemPrompt,
+          messages: [{ role: 'user', content: text }]
         })
       });
+      if (!res.ok) return null;
       const data = await res.json();
-      setAiAnalysis(data);
-    } catch (e) {
-      console.warn('API error, projecting calculations client-side', e);
-      calculateAiProjectionsLocal();
+      const raw = data?.content?.[0]?.text?.trim() || '';
+      // Extract JSON even if Claude adds extra text
+      const jsonMatch = raw.match(/\{[\s\S]*\}/);
+      if (!jsonMatch) return null;
+      return JSON.parse(jsonMatch[0]);
+    } catch {
+      return null;
+    }
+  };
+
+  // AI Payoff Math Projection Simulator
+  const calculateAiProjections = async () => {
+    setIsRecalculating(true);
+    setNlpParsedResult(null);
+
+    try {
+      // ── Step 1: Parse intent from custom text using LLM or backend regex ──
+      let parsedLumpSum = simLumpSum;
+      let parsedLumpSumOffset = 3;
+      let parsedExtraMonthly = simExtraMonthly;
+      let parsedSalaryHike = simSalaryHike;
+      let parsedDescription = '';
+
+      if (simCustomText.trim()) {
+        // Try Claude LLM first (if API key set)
+        const llmResult = await parseIntentWithLLM(simCustomText);
+        if (llmResult) {
+          parsedLumpSum = simLumpSum + (llmResult.lumpSum || 0);
+          parsedLumpSumOffset = llmResult.lumpSumMonthOffset || 1;
+          parsedExtraMonthly = simExtraMonthly + (llmResult.extraMonthly || 0);
+          parsedSalaryHike = simSalaryHike + (llmResult.salaryHikePercent || 0);
+          parsedDescription = llmResult.description || '';
+          setNlpParsedResult({
+            description: llmResult.description,
+            lumpSum: llmResult.lumpSum,
+            salaryHikePercent: llmResult.salaryHikePercent,
+            extraMonthly: llmResult.extraMonthly
+          });
+        }
+      }
+
+      // ── Step 2: Run backend simulation with merged params ──
+      if (!isUsingFallback) {
+        try {
+          const res = await fetch(`${API_BASE}/ai/analyze`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              userId: 1,
+              extraMonthlyPayment: parsedExtraMonthly,
+              lumpSumPrepayment: parsedLumpSum,
+              salaryHikePercent: parsedSalaryHike,
+              customText: simCustomText // still send for backend's own parsing/logging
+            })
+          });
+          const data = await res.json();
+          // Inject LLM-parsed description into advice if available
+          if (parsedDescription && data.advice) {
+            data.advice = `**🤖 AI understood:** *${parsedDescription}*\n\n` + data.advice;
+          }
+          if (data.nlpParsedResult) {
+            setNlpParsedResult({
+              description: data.nlpParsedResult.description,
+              lumpSum: data.nlpParsedResult.lumpSum,
+              salaryHikePercent: data.nlpParsedResult.salaryHikePercent,
+              extraMonthly: data.nlpParsedResult.extraMonthly
+            });
+          }
+          setAiAnalysis(data);
+        } catch {
+          calculateAiProjectionsLocal();
+        }
+      } else {
+        calculateAiProjectionsLocal();
+      }
+    } finally {
+      setIsRecalculating(false);
     }
   };
 
@@ -354,7 +454,79 @@ export default function App() {
     const totalDebtValue = loansWithPayments.reduce((sum, item) => sum + item.loan.principal, 0);
     const surplus = Math.max(0, totalIncome - totalExpenses - totalEmi);
 
-    const activeExtraPool = surplus + simExtraMonthly;
+    // ── Parse simCustomText (NLP) ──
+    let nlpLumpSum = 0;
+    let nlpLumpSumOffset = 1;
+    let nlpSalaryHike = 0;
+    let nlpExtraMonthly = 0;
+    let nlpAckMsg = '';
+
+    if (simCustomText && simCustomText.trim()) {
+      const txt = simCustomText.toLowerCase();
+
+      // Extract all numbers > 100
+      const numMatches = [...txt.matchAll(/(?:₹|rs\.?|inr)?\s*(\d{1,3}(?:,\d{3})*(?:\.\d+)?)/g)];
+      const allNums: number[] = numMatches
+        .map(m => parseFloat(m[1].replace(/,/g, '')))
+        .filter(n => n > 100);
+
+      // Intent detection
+      const isBonus = /join\w*|bonus|joining|incentive|award|gratuity|maturity|\bfd\b|fixed deposit|prepay|lump.?sum|receive|windfall|relocation/.test(txt);
+      const isSalaryHike = /hike|increment|appraisal|raise|switch\w*\s+job|new job|new salary|salary increase|increase.*salary|salary.*hike|hike.*salary|salary.*raise|pay rise|package|\bctc\b|compensation|income increase/.test(txt);
+      const isExtraMonthly = /extra.*month|month.*extra|per month|every month|monthly extra|monthly payment|additional.*month/.test(txt);
+
+      // Lump sum
+      if (isBonus && allNums.length > 0) {
+        nlpLumpSum = Math.max(...allNums);
+        if (txt.includes('now') || txt.includes('today') || txt.includes('immediate')) nlpLumpSumOffset = 1;
+        else if (txt.includes('in 2 months') || txt.includes('2 months')) nlpLumpSumOffset = 2;
+        else if (txt.includes('in 3 months') || txt.includes('3 months')) nlpLumpSumOffset = 3;
+        else if (txt.includes('in 6 months') || txt.includes('6 months')) nlpLumpSumOffset = 6;
+        else if (txt.includes('october') || txt.includes('diwali')) nlpLumpSumOffset = 5;
+        else nlpLumpSumOffset = 1;
+        nlpAckMsg += `🎉 Lump-sum inflow of ₹${nlpLumpSum.toLocaleString()} in ${nlpLumpSumOffset} month(s). `;
+      }
+
+      // Salary hike
+      if (isSalaryHike) {
+        const pctMatch = txt.match(/(\d+(?:\.\d+)?)\s*%/);
+        if (pctMatch) {
+          const pct = parseFloat(pctMatch[1]);
+          nlpSalaryHike = (pct / 100) * totalIncome;
+          nlpAckMsg += `📈 ${pct}% salary hike → +₹${Math.round(nlpSalaryHike).toLocaleString()}/mo. `;
+        } else if (allNums.length > 0) {
+          const bigNum = Math.max(...allNums);
+          if (bigNum !== nlpLumpSum) {
+            nlpSalaryHike = bigNum > totalIncome ? (bigNum - totalIncome) : bigNum;
+            nlpAckMsg += `📈 Salary boost of +₹${Math.round(nlpSalaryHike).toLocaleString()}/mo. `;
+          }
+        }
+      }
+
+      // Extra monthly
+      if (isExtraMonthly) {
+        const exMatch = txt.match(/(\d{1,3}(?:,\d{3})*(?:\.\d+)?)\s*(?:extra|per month|monthly|every month)/);
+        if (exMatch) {
+          nlpExtraMonthly = parseFloat(exMatch[1].replace(/,/g, ''));
+          nlpAckMsg += `💳 +₹${nlpExtraMonthly.toLocaleString()} extra/month. `;
+        }
+      }
+
+      // Fallback: any large number
+      if (nlpLumpSum === 0 && nlpSalaryHike === 0 && nlpExtraMonthly === 0 && allNums.length > 0) {
+        nlpLumpSum = Math.max(...allNums);
+        nlpLumpSumOffset = 1;
+        nlpAckMsg += `💡 Detected ₹${nlpLumpSum.toLocaleString()} — treating as one-time inflow next month. `;
+      }
+    }
+
+    // Merge slider values + NLP values
+    const effectiveLumpSum = simLumpSum + nlpLumpSum;
+    const effectiveLumpSumOffset = nlpLumpSum > 0 ? nlpLumpSumOffset : 3;
+    const effectiveExtraMonthly = simExtraMonthly + nlpExtraMonthly;
+    const effectiveSalaryHikeAmt = ((simSalaryHike / 100) * totalIncome) + nlpSalaryHike;
+
+    const activeExtraPool = surplus + effectiveExtraMonthly;
 
     const runSim = (strategy: string) => {
       const localLoans = loansWithPayments.map(lw => ({
@@ -394,13 +566,13 @@ export default function App() {
         let monthTotalPaid = 0;
         let activeExtra = activeExtraPool;
 
-        // Lump sum maturity simulated
-        if (monthIndex === 3) {
-          activeExtra += simLumpSum;
+        // Lump sum at NLP-detected month offset
+        if (monthIndex === effectiveLumpSumOffset) {
+          activeExtra += effectiveLumpSum;
         }
-        // Salary hike in 3 months simulated
-        if (monthIndex >= 3) {
-          activeExtra += (simSalaryHike / 100) * totalIncome;
+        // Salary hike from NLP offset month onward
+        if (monthIndex >= effectiveLumpSumOffset) {
+          activeExtra += effectiveSalaryHikeAmt;
         }
 
         // 1. Accrue Interest
@@ -493,7 +665,7 @@ export default function App() {
     balanced.interestSaved = Math.max(0, baseline.totalInterestPaid - balanced.totalInterestPaid);
     balanced.monthsSaved = Math.max(0, baseline.debtFreeMonths - balanced.debtFreeMonths);
 
-    const adviceText = `### 💡 Smart Financial Assessment\n\nYour monthly net take-home is **${userProfile.currency}${totalIncome.toLocaleString()}** against basic expenses of **${userProfile.currency}${totalExpenses.toLocaleString()}** and monthly EMIs of **${userProfile.currency}${totalEmi.toLocaleString()}**.\n\n${
+    const adviceText = `### 💡 Smart Financial Assessment\n\n${nlpAckMsg ? `**Parsed from your input:** *${nlpAckMsg.trim()}*\n\n` : ''}Your monthly net take-home is **${userProfile.currency}${totalIncome.toLocaleString()}** against basic expenses of **${userProfile.currency}${totalExpenses.toLocaleString()}** and monthly EMIs of **${userProfile.currency}${totalEmi.toLocaleString()}**.${effectiveLumpSum > 0 ? `\n\n💰 A lump-sum of **${userProfile.currency}${effectiveLumpSum.toLocaleString()}** will be applied in month ${effectiveLumpSumOffset} to slash your principal.` : ''}${effectiveSalaryHikeAmt > 0 ? `\n\n📈 Your effective monthly surplus increases by **+${userProfile.currency}${Math.round(effectiveSalaryHikeAmt).toLocaleString()}** from month ${effectiveLumpSumOffset} onward.` : ''}\n\n${
       avalanche.monthsSaved > 0 
         ? `#### 🚀 Why the **Avalanche Strategy** wins for you:\n- **Time saved:** You become debt-free **${avalanche.monthsSaved} months sooner** (in ${avalanche.debtFreeDate} rather than ${baseline.debtFreeDate})!\n- **Interest saved:** You keep **${userProfile.currency}${avalanche.interestSaved.toLocaleString()}** in your pocket instead of paying it to lenders.\n- **Action:** Prioritize extra payments directly to your loan with the highest interest rate while keeping minimums active on other loans.` 
         : `To build a strong payoff trajectory, allocate an extra monthly buffer in the What-If slider to kickstart the visual payoff curve!`
@@ -739,6 +911,30 @@ export default function App() {
       await fetch(`${API_BASE}/income/${id}`, { method: 'DELETE' });
       loadAllData();
     }
+  };
+
+  const handleUpdateIncome = async (id: number) => {
+    const newAmount = parseFloat(editIncomeForm.amount);
+    if (isNaN(newAmount) || newAmount <= 0) return;
+
+    if (isUsingFallback) {
+      const updated = incomes.map(inc =>
+        inc.id === id
+          ? { ...inc, type: editIncomeForm.type, amount: newAmount }
+          : inc
+      );
+      setIncomes(updated);
+      localStorage.setItem('incomes', JSON.stringify(updated));
+      calculateAiProjectionsLocal();
+    } else {
+      await fetch(`${API_BASE}/income/${id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ type: editIncomeForm.type, amount: newAmount, isConfirmed: true })
+      });
+      loadAllData();
+    }
+    setEditingIncomeId(null);
   };
 
   // Simulated Voice Input Action Parser
@@ -1648,22 +1844,125 @@ export default function App() {
             <div className="premium-card glow-card" style={{ marginBottom: '2rem', borderLeftWidth: '5px', borderLeftColor: 'var(--primary)' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '0.5rem' }}>
                 <Sparkles size={20} style={{ color: 'var(--primary)' }} />
-                <h3 style={{ margin: 0 }}>Smart Payoff English Context Simulator</h3>
+                <h3 style={{ margin: 0 }}>Smart Payoff Context Simulator</h3>
+                {!aiKey && <span style={{ fontSize: '0.72rem', background: 'rgba(245,158,11,0.12)', color: '#fbbf24', padding: '0.2rem 0.6rem', borderRadius: '8px', marginLeft: '0.5rem' }}>Add Claude API key in Settings for smarter AI parsing</span>}
               </div>
               <p style={{ color: 'var(--text-muted)', margin: 0, fontSize: '0.9rem' }}>
-                Type your anticipated future financial changes in plain English. The math engine will parse inputs like bonuses, hikes, or extra monthly payments instantly!
+                Describe any future financial event in plain English — job switch, bonus, extra payment, salary hike, FD maturity, etc. The AI will extract and simulate it automatically.
               </p>
-              <div style={{ display: 'flex', gap: '1rem', marginTop: '1.25rem' }}>
-                <input 
-                  type="text" 
-                  placeholder="e.g. 'I'm getting a Diwali bonus of 50000 in October' or 'I will pay 6000 extra every month'"
-                  value={simCustomText}
-                  onChange={(e) => setSimCustomText(e.target.value)}
-                  style={{ flexGrow: 1 }}
-                />
-                <button className="btn btn-primary" onClick={calculateAiProjections}>
-                  Recalculate Plan
-                </button>
+
+              <div style={{ marginTop: '1.25rem', display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+                <div style={{ position: 'relative' }}>
+                  <textarea
+                    placeholder={"Try: 'I'm switching jobs next month with a joining bonus of ₹1,50,000'\nOr: 'Got a 30% hike, planning to put ₹8000 extra towards loans every month'\nOr: 'My FD of 2 lakhs matures in 3 months'"}
+                    value={simCustomText}
+                    onChange={(e) => setSimCustomText(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+                        e.preventDefault();
+                        calculateAiProjections();
+                      }
+                    }}
+                    rows={3}
+                    style={{
+                      width: '100%',
+                      resize: 'vertical',
+                      fontFamily: 'var(--font-body)',
+                      fontSize: '0.95rem',
+                      lineHeight: '1.5',
+                      padding: '0.85rem 1rem',
+                      borderRadius: '12px',
+                      background: 'rgba(255,255,255,0.03)',
+                      border: '1px solid rgba(168,85,247,0.25)',
+                      color: 'white',
+                      outline: 'none',
+                      boxSizing: 'border-box'
+                    }}
+                  />
+                  <span style={{ position: 'absolute', bottom: '0.5rem', right: '0.75rem', fontSize: '0.7rem', color: 'var(--text-dimmed)' }}>Ctrl+Enter to run</span>
+                </div>
+
+                <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+                  <button
+                    className="btn btn-primary"
+                    onClick={calculateAiProjections}
+                    disabled={isRecalculating}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '0.6rem',
+                      minWidth: '180px',
+                      justifyContent: 'center',
+                      opacity: isRecalculating ? 0.8 : 1,
+                      cursor: isRecalculating ? 'not-allowed' : 'pointer',
+                      position: 'relative',
+                      overflow: 'hidden'
+                    }}
+                  >
+                    {isRecalculating ? (
+                      <>
+                        <span style={{
+                          width: '16px', height: '16px',
+                          border: '2px solid rgba(255,255,255,0.3)',
+                          borderTopColor: 'white',
+                          borderRadius: '50%',
+                          display: 'inline-block',
+                          animation: 'spin 0.7s linear infinite'
+                        }} />
+                        Analysing...
+                      </>
+                    ) : (
+                      <>
+                        <Sparkles size={16} />
+                        Recalculate Plan
+                      </>
+                    )}
+                  </button>
+                  {isRecalculating && (
+                    <span style={{ fontSize: '0.85rem', color: 'var(--primary)', animation: 'pulse 1.2s ease-in-out infinite' }}>
+                      {aiKey ? '🤖 Parsing your prompt with Claude AI...' : '⚙️ Running simulation engine...'}
+                    </span>
+                  )}
+                  {!isRecalculating && simCustomText && !nlpParsedResult && (
+                    <span style={{ fontSize: '0.8rem', color: 'var(--text-dimmed)' }}>Press Ctrl+Enter or click to analyse</span>
+                  )}
+                </div>
+
+                {/* NLP Result Banner */}
+                {nlpParsedResult && !isRecalculating && (
+                  <div style={{
+                    padding: '0.85rem 1rem',
+                    background: 'rgba(168,85,247,0.08)',
+                    border: '1px solid rgba(168,85,247,0.25)',
+                    borderRadius: '12px',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: '0.5rem',
+                    animation: 'fadeIn 0.3s ease'
+                  }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.85rem', fontWeight: 700, color: 'var(--primary)' }}>
+                      <Sparkles size={14} /> 🤖 AI Understood
+                    </div>
+                    <div style={{ fontSize: '0.9rem', fontStyle: 'italic', color: 'white' }}>"{nlpParsedResult.description}"</div>
+                    <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap', marginTop: '0.25rem' }}>
+                      {nlpParsedResult.lumpSum > 0 && (
+                        <span style={{ fontSize: '0.8rem', background: 'rgba(16,185,129,0.12)', color: '#10b981', padding: '0.2rem 0.6rem', borderRadius: '8px' }}>
+                          💰 One-time ₹{nlpParsedResult.lumpSum.toLocaleString()}
+                        </span>
+                      )}
+                      {nlpParsedResult.salaryHikePercent > 0 && (
+                        <span style={{ fontSize: '0.8rem', background: 'rgba(99,102,241,0.12)', color: '#818cf8', padding: '0.2rem 0.6rem', borderRadius: '8px' }}>
+                          📈 +{nlpParsedResult.salaryHikePercent}% salary hike
+                        </span>
+                      )}
+                      {nlpParsedResult.extraMonthly > 0 && (
+                        <span style={{ fontSize: '0.8rem', background: 'rgba(245,158,11,0.12)', color: '#fbbf24', padding: '0.2rem 0.6rem', borderRadius: '8px' }}>
+                          💳 +₹{nlpParsedResult.extraMonthly.toLocaleString()}/month extra
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
 
@@ -1982,18 +2281,81 @@ export default function App() {
 
               <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', marginTop: '1.5rem' }}>
                 {incomes.map(inc => (
-                  <div key={inc.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.85rem', background: 'rgba(255,255,255,0.01)', border: '1px solid rgba(255,255,255,0.03)', borderRadius: '12px' }}>
-                    <div style={{ fontWeight: 600 }}>{inc.type}</div>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
-                      <span style={{ fontWeight: 700, color: 'var(--success)' }}>+{userProfile.currency}{inc.amount.toLocaleString()}</span>
-                      <button 
-                        className="btn btn-secondary" 
-                        style={{ padding: '0.3rem 0.5rem', fontSize: '0.75rem', color: 'var(--danger)', borderColor: 'rgba(239, 68, 68, 0.2)' }}
-                        onClick={() => inc.id && handleDeleteIncome(inc.id)}
-                      >
-                        Delete
-                      </button>
-                    </div>
+                  <div key={inc.id} style={{ padding: '0.85rem', background: 'rgba(255,255,255,0.01)', border: `1px solid ${editingIncomeId === inc.id ? 'var(--primary)' : 'rgba(255,255,255,0.05)'}`, borderRadius: '12px', transition: 'border-color 0.2s' }}>
+                    {editingIncomeId === inc.id ? (
+                      /* ─── Inline Edit Row ─── */
+                      <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center', flexWrap: 'wrap' }}>
+                        <select
+                          value={editIncomeForm.type}
+                          onChange={(e) => setEditIncomeForm({ ...editIncomeForm, type: e.target.value })}
+                          style={{ flex: '0 0 auto', minWidth: '130px' }}
+                        >
+                          <option value="Salary">💼 Salary</option>
+                          <option value="Freelance">🎨 Freelance</option>
+                          <option value="Side Income">🚀 Side Income</option>
+                          <option value="Rental">🏠 Rental</option>
+                          <option value="Bonus">🎁 Bonus</option>
+                          <option value="Returns">📈 Returns</option>
+                        </select>
+                        <div style={{ position: 'relative', flex: '1 1 120px', minWidth: '120px' }}>
+                          <span style={{ position: 'absolute', left: '0.75rem', top: '50%', transform: 'translateY(-50%)', fontSize: '0.9rem', color: 'var(--primary)', pointerEvents: 'none' }}>₹</span>
+                          <input
+                            type="number"
+                            value={editIncomeForm.amount}
+                            onChange={(e) => setEditIncomeForm({ ...editIncomeForm, amount: e.target.value })}
+                            onKeyDown={(e) => { if (e.key === 'Enter') inc.id && handleUpdateIncome(inc.id); if (e.key === 'Escape') setEditingIncomeId(null); }}
+                            style={{ width: '100%', paddingLeft: '1.75rem' }}
+                            autoFocus
+                            placeholder="Amount"
+                          />
+                        </div>
+                        <button
+                          className="btn btn-primary"
+                          style={{ padding: '0.4rem 0.9rem', fontSize: '0.85rem' }}
+                          onClick={() => inc.id && handleUpdateIncome(inc.id)}
+                        >
+                          Save
+                        </button>
+                        <button
+                          className="btn btn-secondary"
+                          style={{ padding: '0.4rem 0.7rem', fontSize: '0.85rem' }}
+                          onClick={() => setEditingIncomeId(null)}
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    ) : (
+                      /* ─── Display Row ─── */
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <div style={{ fontWeight: 600, display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                          <span style={{ fontSize: '1.1rem' }}>
+                            {inc.type === 'Salary' ? '💼' : inc.type === 'Freelance' ? '🎨' : inc.type === 'Rental' ? '🏠' : inc.type === 'Bonus' ? '🎁' : inc.type === 'Returns' ? '📈' : '🚀'}
+                          </span>
+                          {inc.type}
+                          {inc.isConfirmed === false && <span style={{ fontSize: '0.7rem', color: 'var(--warning)', background: 'rgba(245,158,11,0.1)', padding: '0.1rem 0.4rem', borderRadius: '6px' }}>Expected</span>}
+                        </div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                          <span style={{ fontWeight: 700, color: 'var(--success)', fontSize: '1rem' }}>+{userProfile.currency}{inc.amount.toLocaleString()}</span>
+                          <button
+                            className="btn btn-secondary"
+                            style={{ padding: '0.3rem 0.65rem', fontSize: '0.75rem', color: 'var(--primary)', borderColor: 'rgba(168,85,247,0.25)' }}
+                            onClick={() => {
+                              setEditingIncomeId(inc.id ?? null);
+                              setEditIncomeForm({ type: inc.type, amount: String(inc.amount) });
+                            }}
+                          >
+                            ✏️ Edit
+                          </button>
+                          <button
+                            className="btn btn-secondary"
+                            style={{ padding: '0.3rem 0.5rem', fontSize: '0.75rem', color: 'var(--danger)', borderColor: 'rgba(239, 68, 68, 0.2)' }}
+                            onClick={() => inc.id && handleDeleteIncome(inc.id)}
+                          >
+                            Delete
+                          </button>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 ))}
               </div>

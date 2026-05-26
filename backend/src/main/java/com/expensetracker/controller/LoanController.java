@@ -38,39 +38,6 @@ public class LoanController {
     @GetMapping
     public List<LoanWithPayments> getLoans(@RequestParam Long userId) {
         List<Loan> loans = loanRepository.findByUserId(userId);
-        if (loans.isEmpty() && userId == 1L) {
-            // Seed a default Car Loan and Friend Loan
-            LocalDate today = LocalDate.now();
-            
-            Loan carLoan = new Loan();
-            carLoan.setUserId(1L);
-            carLoan.setName("HDFC Car Loan");
-            carLoan.setPrincipal(600000.0);
-            carLoan.setRate(9.5);
-            carLoan.setTenure(36);
-            carLoan.setEmi(19220.0);
-            carLoan.setStartDate(today.minusMonths(6).withDayOfMonth(5)); // Started 6 months ago
-            carLoan.setLender("HDFC Bank");
-            carLoan.setType("Car");
-            Loan savedCarLoan = loanRepository.save(carLoan);
-            generatePaymentsForLoan(savedCarLoan, 6); // Pre-pay the first 6 payments for visual appeal!
-
-            Loan fdLoan = new Loan();
-            fdLoan.setUserId(1L);
-            fdLoan.setName("Friend Loan - Rahul");
-            fdLoan.setPrincipal(50000.0);
-            fdLoan.setRate(0.0);
-            fdLoan.setTenure(10);
-            fdLoan.setEmi(5000.0);
-            fdLoan.setStartDate(today.minusMonths(2).withDayOfMonth(10));
-            fdLoan.setLender("Rahul");
-            fdLoan.setType("Friend");
-            Loan savedFdLoan = loanRepository.save(fdLoan);
-            generatePaymentsForLoan(savedFdLoan, 2);
-
-            loans = loanRepository.findByUserId(1L);
-        }
-
         List<LoanWithPayments> result = new ArrayList<>();
         for (Loan loan : loans) {
             List<EmiPayment> payments = emiPaymentRepository.findByLoanId(loan.getId());

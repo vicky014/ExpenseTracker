@@ -96,6 +96,25 @@ public class AiController {
         public List<ProjectionDataPoint> getProjection() { return projection; }
     }
 
+    public static class NlpParsedResult {
+        private String description;
+        private Double lumpSum;
+        private Double salaryHikePercent;
+        private Double extraMonthly;
+
+        public NlpParsedResult(String description, Double lumpSum, Double salaryHikePercent, Double extraMonthly) {
+            this.description = description;
+            this.lumpSum = lumpSum;
+            this.salaryHikePercent = salaryHikePercent;
+            this.extraMonthly = extraMonthly;
+        }
+
+        public String getDescription() { return description; }
+        public Double getLumpSum() { return lumpSum; }
+        public Double getSalaryHikePercent() { return salaryHikePercent; }
+        public Double getExtraMonthly() { return extraMonthly; }
+    }
+
     public static class AnalysisResponse {
         private Double monthlyIncome;
         private Double monthlyExpenses;
@@ -106,6 +125,7 @@ public class AiController {
         private StrategyResult snowball;
         private StrategyResult balanced;
         private String advice;
+        private NlpParsedResult nlpParsedResult;
 
         // Getters and Setters
         public Double getMonthlyIncome() { return monthlyIncome; }
@@ -126,6 +146,8 @@ public class AiController {
         public void setBalanced(StrategyResult balanced) { this.balanced = balanced; }
         public String getAdvice() { return advice; }
         public void setAdvice(String advice) { this.advice = advice; }
+        public NlpParsedResult getNlpParsedResult() { return nlpParsedResult; }
+        public void setNlpParsedResult(NlpParsedResult nlpParsedResult) { this.nlpParsedResult = nlpParsedResult; }
     }
 
     @GetMapping("/context")
@@ -167,6 +189,7 @@ public class AiController {
         double parsedLumpSum = 0.0;
         int parsedLumpSumMonthOffset = 0;
         double parsedSalaryHike = 0.0;
+        double parsedSalaryHikePercent = 0.0;
         int parsedSalaryHikeMonthOffset = 0;
         double parsedExtraMonthly = 0.0;
         String nlpAcknowledgeMessage = "";
@@ -179,63 +202,103 @@ public class AiController {
             aiContextRepository.save(history);
 
             String textLower = customText.toLowerCase();
-            
-            // Regex for bonus/lump-sums e.g., "bonus of ₹50,000 in October" or "FD maturity of 100000" or "prepay 5000"
-            Pattern numPattern = Pattern.compile("(?i)(?:bonus|prepay|fd|maturity|receive|lump-sum).*?(\\d{1,3}(?:,\\d{3})*(?:\\.\\d+)?)\\b");
-            Matcher numMatcher = numPattern.matcher(textLower);
-            if (numMatcher.find()) {
-                String amountStr = numMatcher.group(1).replace(",", "");
-                parsedLumpSum = Double.parseDouble(amountStr);
-                
-                // Parse date offset (e.g. "next month" = 1, "in 3 months" = 3, "in October" etc.)
-                if (textLower.contains("next month")) {
+
+            // ── Step 1: Extract ALL numbers mentioned in the text (handles "100000 joining bonus" order) ──
+            Pattern anyNumberPattern = Pattern.compile("(?:₹|rs\\.?|inr)?\\s*(\\d{1,3}(?:,\\d{3})*(?:\\.\\d+)?)\\s*(?:k|lakh|l|lakhs)?");
+            Matcher anyNumberMatcher = anyNumberPattern.matcher(textLower);
+            List<Double> allNumbers = new ArrayList<>();
+            while (anyNumberMatcher.find()) {
+                String raw = anyNumberMatcher.group(1).replace(",", "");
+                try {
+                    double val = Double.parseDouble(raw);
+                    // Scale "k" / "lakh" suffix
+                    String afterNum = textLower.substring(anyNumberMatcher.end()).trim();
+                    if (afterNum.startsWith("k") || afterNum.startsWith(" k")) val *= 1_000;
+                    else if (afterNum.startsWith("lakh") || afterNum.startsWith("l ")) val *= 100_000;
+                    if (val > 100) allNumbers.add(val); // ignore tiny numbers like percentages here
+                } catch (NumberFormatException ignored) {}
+            }
+
+            // ── Step 2: Detect intent categories from keywords (order-agnostic) ──
+            boolean isBonus = textLower.matches(".*(\\bjoin\\w*|\\bbonus\\b|\\bjoining\\b|\\bincentive\\b|\\baward\\b|\\bgratuity\\b|\\bmaturity\\b|\\bfd\\b|\\bfixed deposit\\b|\\bprepay\\b|\\blump.?sum\\b|\\breceive\\b|\\bwindfall\\b|\\brelocation\\b).*");
+            boolean isSalaryHike = textLower.matches(".*(\\bhike\\b|\\bincrement\\b|\\bappraisal\\b|\\braise\\b|\\bswitch\\w*\\s+job|\\bnew job\\b|\\bnew salary\\b|\\bsalary increase\\b|\\bincrease.*salary|\\bsalary.*increase\\b|\\bsalary.*hike\\b|\\bhike.*salary\\b|\\bsalary.*raise|\\bpay rise\\b|\\bpackage\\b|\\bctc\\b|\\bcompensation\\b|\\bincome increase\\b).*");
+            boolean isExtraMonthly = textLower.matches(".*(\\bextra.*month|\\bmonth.*extra|\\bper month|\\bevery month|\\bmonthly extra\\b|\\bmonthly payment\\b|\\badditional.*month\\b).*");
+
+            // ── Step 3: Assign values based on intent ──
+
+            // Lump-sum bonus / joining bonus / prepayment
+            if (isBonus && !allNumbers.isEmpty()) {
+                // If there's a percentage number mixed in, prefer the large absolute number
+                parsedLumpSum = allNumbers.stream().mapToDouble(d -> d).max().orElse(0);
+
+                // Month offset: look for timing hints
+                if (textLower.contains("next month")) parsedLumpSumMonthOffset = 1;
+                else if (textLower.contains("immediate") || textLower.contains("now") || textLower.contains("today")) parsedLumpSumMonthOffset = 1;
+                else if (textLower.contains("in 2 months") || textLower.contains("2 months")) parsedLumpSumMonthOffset = 2;
+                else if (textLower.contains("in 3 months") || textLower.contains("3 months")) parsedLumpSumMonthOffset = 3;
+                else if (textLower.contains("in 6 months") || textLower.contains("6 months")) parsedLumpSumMonthOffset = 6;
+                else if (textLower.contains("october")) parsedLumpSumMonthOffset = 5;
+                else if (textLower.contains("january")) parsedLumpSumMonthOffset = 7;
+                else if (textLower.contains("diwali")) parsedLumpSumMonthOffset = 5;
+                else parsedLumpSumMonthOffset = 1; // default: next month
+
+                nlpAcknowledgeMessage += String.format("🎉 Found lump-sum inflow of ₹%,.0f in %d month(s). ", parsedLumpSum, parsedLumpSumMonthOffset);
+            }
+
+            // Salary hike — look for a % number first, then absolute amount
+            if (isSalaryHike) {
+                // Try percentage pattern first e.g. "25% hike" or "hike of 30%"
+                Pattern pctPat = Pattern.compile("(\\d+(?:\\.\\d+)?)\\s*%");
+                Matcher pctMat = pctPat.matcher(textLower);
+                if (pctMat.find()) {
+                    double pct = Double.parseDouble(pctMat.group(1));
+                    parsedSalaryHike = (pct / 100.0) * totalIncome;
+                    parsedSalaryHikePercent = pct;
+                    parsedSalaryHikeMonthOffset = textLower.contains("3 months") ? 3 : textLower.contains("6 months") ? 6 : 1;
+                    nlpAcknowledgeMessage += String.format("📈 Found %.0f%% salary hike → +₹%,.0f/mo additional income. ", pct, parsedSalaryHike);
+                } else if (!allNumbers.isEmpty()) {
+                    // Could be an absolute salary amount mentioned — treat as monthly income boost
+                    // Heuristic: if the number is large (>10000), treat as new salary, derive increment
+                    double bigNum = allNumbers.stream().mapToDouble(d -> d).max().orElse(0);
+                    // If number wasn't already captured as lump-sum bonus, use it as extra monthly income
+                    if (bigNum > 0 && bigNum != parsedLumpSum) {
+                        parsedSalaryHike = bigNum > totalIncome ? (bigNum - totalIncome) : bigNum;
+                        parsedSalaryHikePercent = totalIncome > 0 ? (parsedSalaryHike / totalIncome) * 100.0 : 0.0;
+                        parsedSalaryHikeMonthOffset = 1;
+                        nlpAcknowledgeMessage += String.format("📈 Found salary boost of +₹%,.0f/mo from job switch. ", parsedSalaryHike);
+                    } else if (parsedLumpSum > 0) {
+                        // bonus already captured, no extra monthly hike detected — that's fine
+                    }
+                }
+            }
+
+            // Extra monthly payment
+            if (isExtraMonthly) {
+                Pattern extraPat = Pattern.compile("(\\d{1,3}(?:,\\d{3})*(?:\\.\\d+)?)\\s*(?:extra|per month|monthly|every month|/month)");
+                Matcher extraMat = extraPat.matcher(textLower);
+                if (extraMat.find()) {
+                    parsedExtraMonthly = Double.parseDouble(extraMat.group(1).replace(",", ""));
+                    nlpAcknowledgeMessage += String.format("💳 Adding ₹%,.0f extra monthly debt payment. ", parsedExtraMonthly);
+                }
+            }
+
+            // ── Step 4: If nothing matched but numbers exist, use context clues ──
+            if (parsedLumpSum == 0 && parsedSalaryHike == 0 && parsedExtraMonthly == 0 && !allNumbers.isEmpty()) {
+                // Last resort: if user mentions any large number, treat as lump sum
+                double largest = allNumbers.stream().mapToDouble(d -> d).max().orElse(0);
+                if (largest > 0) {
+                    parsedLumpSum = largest;
                     parsedLumpSumMonthOffset = 1;
-                } else if (textLower.contains("in 2 months")) {
-                    parsedLumpSumMonthOffset = 2;
-                } else if (textLower.contains("in 3 months") || textLower.contains("3 months")) {
-                    parsedLumpSumMonthOffset = 3;
-                } else if (textLower.contains("october")) {
-                    parsedLumpSumMonthOffset = 5;
-                } else {
-                    parsedLumpSumMonthOffset = 1; // Default next month
+                    nlpAcknowledgeMessage += String.format("💡 Detected financial event with ₹%,.0f — treating as one-time inflow next month. ", parsedLumpSum);
                 }
-                nlpAcknowledgeMessage += String.format("Acknowledge: Found lump sum inflow of ₹%,.0f in %d month(s). ", parsedLumpSum, parsedLumpSumMonthOffset);
-            }
-
-            // Regex for salary hike e.g. "salary increases by ₹10,000" or "25% salary hike"
-            Pattern hikePercentPattern = Pattern.compile("(\\d+)\\s*%\\s*salary");
-            Matcher hikePercentMatcher = hikePercentPattern.matcher(textLower);
-            if (hikePercentMatcher.find()) {
-                double pct = Double.parseDouble(hikePercentMatcher.group(1));
-                parsedSalaryHike = (pct / 100.0) * totalIncome;
-                parsedSalaryHikeMonthOffset = textLower.contains("3 months") ? 3 : 1;
-                nlpAcknowledgeMessage += String.format("Acknowledge: Found %s%% salary hike (approx. +₹%,.0f/mo). ", hikePercentMatcher.group(1), parsedSalaryHike);
-            } else {
-                Pattern hikeAmtPattern = Pattern.compile("salary.*?increases.*?(\\d{1,3}(?:,\\d{3})*(?:\\.\\d+)?)\\b");
-                Matcher hikeAmtMatcher = hikeAmtPattern.matcher(textLower);
-                if (hikeAmtMatcher.find()) {
-                    String amtStr = hikeAmtMatcher.group(1).replace(",", "");
-                    parsedSalaryHike = Double.parseDouble(amtStr);
-                    parsedSalaryHikeMonthOffset = 1;
-                    nlpAcknowledgeMessage += String.format("Acknowledge: Found salary increase of +₹%,.0f/mo. ", parsedSalaryHike);
-                }
-            }
-
-            // Regex for extra monthly payment e.g. "pay ₹5,000 extra every month" or "extra 2000 per month"
-            Pattern extraPattern = Pattern.compile("(?i)(?:pay|extra).*?(\\d{1,3}(?:,\\d{3})*(?:\\.\\d+)?)\\b.*?monthly");
-            Matcher extraMatcher = extraPattern.matcher(textLower);
-            if (extraMatcher.find()) {
-                String amtStr = extraMatcher.group(1).replace(",", "");
-                parsedExtraMonthly = Double.parseDouble(amtStr);
-                nlpAcknowledgeMessage += String.format("Acknowledge: Adding ₹%,.0f extra monthly payment. ", parsedExtraMonthly);
             }
         }
 
-        // Apply sliders / manual request parameters OR parsed parameters
-        double simExtraMonthly = request.getExtraMonthlyPayment() != null ? request.getExtraMonthlyPayment() : parsedExtraMonthly;
-        double simLumpSum = request.getLumpSumPrepayment() != null ? request.getLumpSumPrepayment() : parsedLumpSum;
-        int simLumpSumOffset = parsedLumpSumMonthOffset;
-        double simHikeAmt = request.getSalaryHikePercent() != null ? (request.getSalaryHikePercent() / 100.0) * totalIncome : parsedSalaryHike;
+        // Apply sliders / manual request parameters AND parsed parameters
+        double simExtraMonthly = (request.getExtraMonthlyPayment() != null ? request.getExtraMonthlyPayment() : 0.0) + parsedExtraMonthly;
+        double simLumpSum = (request.getLumpSumPrepayment() != null ? request.getLumpSumPrepayment() : 0.0) + parsedLumpSum;
+        int simLumpSumOffset = parsedLumpSumMonthOffset > 0 ? parsedLumpSumMonthOffset : 3;
+        double simHikeAmt = (request.getSalaryHikePercent() != null ? (request.getSalaryHikePercent() / 100.0) * totalIncome : 0.0) + parsedSalaryHike;
 
         // Cumulative active cash flow for prepayments
         double activeExtraCash = surplus + simExtraMonthly;
@@ -294,6 +357,15 @@ public class AiController {
         response.setSnowball(snowballRes);
         response.setBalanced(balancedRes);
         response.setAdvice(advice);
+
+        if (customText != null && !customText.trim().isEmpty()) {
+            response.setNlpParsedResult(new NlpParsedResult(
+                nlpAcknowledgeMessage.trim(),
+                parsedLumpSum,
+                parsedSalaryHikePercent,
+                parsedExtraMonthly
+            ));
+        }
 
         return response;
     }

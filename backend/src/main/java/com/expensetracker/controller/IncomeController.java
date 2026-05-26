@@ -3,8 +3,10 @@ package com.expensetracker.controller;
 import com.expensetracker.model.IncomeSource;
 import com.expensetracker.repository.IncomeSourceRepository;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import java.util.List;
+import java.util.Optional;
 
 @RestController
 @RequestMapping("/api/income")
@@ -15,33 +17,29 @@ public class IncomeController {
 
     @GetMapping
     public List<IncomeSource> getIncomeSources(@RequestParam Long userId) {
-        List<IncomeSource> sources = incomeSourceRepository.findByUserId(userId);
-        if (sources.isEmpty() && userId == 1L) {
-            // Seed default income sources for the demo user
-            IncomeSource salary = new IncomeSource();
-            salary.setUserId(1L);
-            salary.setType("Salary");
-            salary.setAmount(85000.0);
-            salary.setFrequency("Monthly");
-            salary.setIsConfirmed(true);
-            incomeSourceRepository.save(salary);
-
-            IncomeSource freelance = new IncomeSource();
-            freelance.setUserId(1L);
-            freelance.setType("Freelance");
-            freelance.setAmount(15000.0);
-            freelance.setFrequency("Monthly");
-            freelance.setIsConfirmed(false);
-            incomeSourceRepository.save(freelance);
-            
-            return incomeSourceRepository.findByUserId(1L);
-        }
-        return sources;
+        return incomeSourceRepository.findByUserId(userId);
     }
 
     @PostMapping
     public IncomeSource saveIncomeSource(@RequestBody IncomeSource incomeSource) {
         return incomeSourceRepository.save(incomeSource);
+    }
+
+    @PutMapping("/{id}")
+    public ResponseEntity<IncomeSource> updateIncomeSource(
+            @PathVariable Long id,
+            @RequestBody IncomeSource updated) {
+        Optional<IncomeSource> existing = incomeSourceRepository.findById(id);
+        if (existing.isPresent()) {
+            IncomeSource inc = existing.get();
+            inc.setType(updated.getType());
+            inc.setAmount(updated.getAmount());
+            if (updated.getIsConfirmed() != null) {
+                inc.setIsConfirmed(updated.getIsConfirmed());
+            }
+            return ResponseEntity.ok(incomeSourceRepository.save(inc));
+        }
+        return ResponseEntity.notFound().build();
     }
 
     @DeleteMapping("/{id}")
