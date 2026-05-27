@@ -127,6 +127,21 @@ public class AiController {
         private StrategyResult avalanche;
         private StrategyResult snowball;
         private StrategyResult balanced;
+        
+        // New Strategy Results
+        private StrategyResult priorityFirst;
+        private StrategyResult hybridEmotional;
+        private StrategyResult cashflowRelief;
+        private StrategyResult survival;
+        private StrategyResult relationshipProtection;
+        private StrategyResult aiAdaptive;
+        
+        // Advanced Analytics
+        private Double financialStressScore;
+        private String harassmentRiskLevel;
+        private Double confidenceScore;
+        private List<String> skipSuggestions;
+        
         private String advice;
         private NlpParsedResult nlpParsedResult;
 
@@ -147,6 +162,29 @@ public class AiController {
         public void setSnowball(StrategyResult snowball) { this.snowball = snowball; }
         public StrategyResult getBalanced() { return balanced; }
         public void setBalanced(StrategyResult balanced) { this.balanced = balanced; }
+        
+        public StrategyResult getPriorityFirst() { return priorityFirst; }
+        public void setPriorityFirst(StrategyResult priorityFirst) { this.priorityFirst = priorityFirst; }
+        public StrategyResult getHybridEmotional() { return hybridEmotional; }
+        public void setHybridEmotional(StrategyResult hybridEmotional) { this.hybridEmotional = hybridEmotional; }
+        public StrategyResult getCashflowRelief() { return cashflowRelief; }
+        public void setCashflowRelief(StrategyResult cashflowRelief) { this.cashflowRelief = cashflowRelief; }
+        public StrategyResult getSurvival() { return survival; }
+        public void setSurvival(StrategyResult survival) { this.survival = survival; }
+        public StrategyResult getRelationshipProtection() { return relationshipProtection; }
+        public void setRelationshipProtection(StrategyResult relationshipProtection) { this.relationshipProtection = relationshipProtection; }
+        public StrategyResult getAiAdaptive() { return aiAdaptive; }
+        public void setAiAdaptive(StrategyResult aiAdaptive) { this.aiAdaptive = aiAdaptive; }
+        
+        public Double getFinancialStressScore() { return financialStressScore; }
+        public void setFinancialStressScore(Double financialStressScore) { this.financialStressScore = financialStressScore; }
+        public String getHarassmentRiskLevel() { return harassmentRiskLevel; }
+        public void setHarassmentRiskLevel(String harassmentRiskLevel) { this.harassmentRiskLevel = harassmentRiskLevel; }
+        public Double getConfidenceScore() { return confidenceScore; }
+        public void setConfidenceScore(Double confidenceScore) { this.confidenceScore = confidenceScore; }
+        public List<String> getSkipSuggestions() { return skipSuggestions; }
+        public void setSkipSuggestions(List<String> skipSuggestions) { this.skipSuggestions = skipSuggestions; }
+        
         public String getAdvice() { return advice; }
         public void setAdvice(String advice) { this.advice = advice; }
         public NlpParsedResult getNlpParsedResult() { return nlpParsedResult; }
@@ -321,43 +359,86 @@ public class AiController {
         StrategyResult avalancheRes = simulateDebtStrategy(loans, currentBalances, "Avalanche", activeExtraCash, simLumpSum, simLumpSumOffset, simHikeAmt, parsedSalaryHikeMonthOffset);
         StrategyResult snowballRes = simulateDebtStrategy(loans, currentBalances, "Snowball", activeExtraCash, simLumpSum, simLumpSumOffset, simHikeAmt, parsedSalaryHikeMonthOffset);
         StrategyResult balancedRes = simulateDebtStrategy(loans, currentBalances, "Balanced", activeExtraCash, simLumpSum, simLumpSumOffset, simHikeAmt, parsedSalaryHikeMonthOffset);
+        StrategyResult priorityFirstRes = simulateDebtStrategy(loans, currentBalances, "PriorityFirst", activeExtraCash, simLumpSum, simLumpSumOffset, simHikeAmt, parsedSalaryHikeMonthOffset);
+        StrategyResult hybridRes = simulateDebtStrategy(loans, currentBalances, "Hybrid", activeExtraCash, simLumpSum, simLumpSumOffset, simHikeAmt, parsedSalaryHikeMonthOffset);
+        StrategyResult cashflowRes = simulateDebtStrategy(loans, currentBalances, "CashflowRelief", activeExtraCash, simLumpSum, simLumpSumOffset, simHikeAmt, parsedSalaryHikeMonthOffset);
+        StrategyResult survivalRes = simulateDebtStrategy(loans, currentBalances, "Survival", activeExtraCash, simLumpSum, simLumpSumOffset, simHikeAmt, parsedSalaryHikeMonthOffset);
+        StrategyResult relationshipRes = simulateDebtStrategy(loans, currentBalances, "RelationshipProtection", activeExtraCash, simLumpSum, simLumpSumOffset, simHikeAmt, parsedSalaryHikeMonthOffset);
+        StrategyResult adaptiveRes = simulateDebtStrategy(loans, currentBalances, "AiAdaptive", activeExtraCash, simLumpSum, simLumpSumOffset, simHikeAmt, parsedSalaryHikeMonthOffset);
 
         // Adjust comparisons relative to Baseline
-        double avIntSaved = Math.max(0.0, baselineRes.getTotalInterestPaid() - avalancheRes.getTotalInterestPaid());
-        int avMonthsSaved = Math.max(0, baselineRes.getDebtFreeMonths() - avalancheRes.getDebtFreeMonths());
-        avalancheRes = new StrategyResult("Avalanche", avalancheRes.getDebtFreeMonths(), avalancheRes.getDebtFreeDate(), avalancheRes.getTotalInterestPaid(), avIntSaved, avMonthsSaved, avalancheRes.getProjection());
+        avalancheRes = calculateRelativeResult(baselineRes, avalancheRes, "Avalanche");
+        snowballRes = calculateRelativeResult(baselineRes, snowballRes, "Snowball");
+        balancedRes = calculateRelativeResult(baselineRes, balancedRes, "Balanced");
+        priorityFirstRes = calculateRelativeResult(baselineRes, priorityFirstRes, "PriorityFirst");
+        hybridRes = calculateRelativeResult(baselineRes, hybridRes, "Hybrid");
+        cashflowRes = calculateRelativeResult(baselineRes, cashflowRes, "CashflowRelief");
+        survivalRes = calculateRelativeResult(baselineRes, survivalRes, "Survival");
+        relationshipRes = calculateRelativeResult(baselineRes, relationshipRes, "RelationshipProtection");
+        adaptiveRes = calculateRelativeResult(baselineRes, adaptiveRes, "AiAdaptive");
 
-        double sbIntSaved = Math.max(0.0, baselineRes.getTotalInterestPaid() - snowballRes.getTotalInterestPaid());
-        int sbMonthsSaved = Math.max(0, baselineRes.getDebtFreeMonths() - snowballRes.getDebtFreeMonths());
-        snowballRes = new StrategyResult("Snowball", snowballRes.getDebtFreeMonths(), snowballRes.getDebtFreeDate(), snowballRes.getTotalInterestPaid(), sbIntSaved, sbMonthsSaved, snowballRes.getProjection());
+        // 4. Calculate Advanced Metrics
+        double emiRatio = totalIncome > 0 ? (totalEmi / totalIncome) * 100.0 : 0.0;
+        double stressScore = (emiRatio * 0.5) + (totalDebt > 100000.0 ? 30.0 : (totalDebt / 100000.0) * 30.0);
+        double avgLoanStress = loans.stream().mapToDouble(Loan::getEmotionalStressScore).average().orElse(50.0);
+        stressScore = (stressScore * 0.6) + (avgLoanStress * 0.4);
+        stressScore = Math.round(Math.max(0.0, Math.min(100.0, stressScore)) * 10.0) / 10.0;
+        
+        String harassmentRisk = "LOW";
+        double maxPenaltyRisk = loans.stream().mapToDouble(Loan::getPenaltyRiskScore).max().orElse(0.0);
+        boolean hasOverdue = loans.stream().anyMatch(l -> l.getDueDate() != null && l.getDueDate().isBefore(LocalDate.now()));
+        if (hasOverdue && maxPenaltyRisk > 75.0) {
+            harassmentRisk = "AGGRESSIVE COLLECTION RISK";
+        } else if (maxPenaltyRisk > 50.0 || emiRatio > 60.0) {
+            harassmentRisk = "MODERATE RISK";
+        } else {
+            harassmentRisk = "LOW";
+        }
+        
+        List<String> skipSuggestions = new ArrayList<>();
+        for (Loan l : loans) {
+            if (l.getAllowSkipPayment() || l.getDebtType().equals("friend") || l.getDebtType().equals("family")) {
+                if (l.getFlexibilityScore() > 60.0) {
+                    skipSuggestions.add(String.format("You may safely defer payment on %s (%s) — lender flexibility is high (%.0f%%).", 
+                        l.getName(), l.getLender(), l.getFlexibilityScore()));
+                }
+            }
+        }
+        if (skipSuggestions.isEmpty()) {
+            skipSuggestions.add("No safe skips identified this month. All active debts require standard payments.");
+        }
+        
+        double surplusRatio = totalIncome > 0 ? (surplus / totalIncome) : 0.0;
+        double confidenceScore = 60.0 + (surplusRatio * 100.0 * 2.0) - (stressScore * 0.2);
+        confidenceScore = Math.round(Math.max(20.0, Math.min(99.0, confidenceScore)) * 10.0) / 10.0;
 
-        double balIntSaved = Math.max(0.0, baselineRes.getTotalInterestPaid() - balancedRes.getTotalInterestPaid());
-        int balMonthsSaved = Math.max(0, baselineRes.getDebtFreeMonths() - balancedRes.getDebtFreeMonths());
-        balancedRes = new StrategyResult("Balanced", balancedRes.getDebtFreeMonths(), balancedRes.getDebtFreeDate(), balancedRes.getTotalInterestPaid(), balIntSaved, balMonthsSaved, balancedRes.getProjection());
-
-        // 4. Construct beautiful Claude advice
-        String advice = "### 💡 Smart Financial Assessment\n\n";
+        // 5. Construct beautiful coaching advice
+        String advice = "### 💡 AI Debt Recovery & Financial Survival Coaching\n\n";
         if (!nlpAcknowledgeMessage.isEmpty()) {
-            advice += "**Parsed Event Inputs:**\n*" + nlpAcknowledgeMessage.trim() + "*\n\n";
+            advice += "**🤖 AI Understood Event:**\n*" + nlpAcknowledgeMessage.trim() + "*\n\n";
         }
         
-        advice += String.format("Your monthly net take-home is **₹%,.0f** against basic expenses of **₹%,.0f** and monthly EMIs of **₹%,.0f**. ", totalIncome, totalExpenses, totalEmi);
+        advice += String.format("Your monthly net take-home is **₹%,.0f** against basic expenses of **₹%,.0f** and EMIs of **₹%,.0f** (Debt-to-Income: **%.1f%%**).\n\n", 
+            totalIncome, totalExpenses, totalEmi, emiRatio);
         
-        if (activeExtraCash > 0) {
-            advice += String.format("By allocating your monthly surplus of **₹%,.0f** and extra payment towards your debt, you can save a significant amount of interest!\n\n", activeExtraCash);
+        if (stressScore > 70) {
+            advice += "⚠️ **Critical Alert:** Your financial stress is **very high (" + stressScore + "/100)**. Your budget is heavily utilized by debt. We highly recommend activating the **Survival Mode Strategy** to pause flexible payments or the **Priority-First Strategy** to mitigate any harassment and collection risks immediately.\n\n";
+        } else if (stressScore > 40) {
+            advice += "⚡ **Action Required:** Your financial stress is **moderate (" + stressScore + "/100)**. Consider executing the **Cashflow Relief Strategy** to quickly eliminate your highest EMI loans, freeing up breathing room.\n\n";
         } else {
-            advice += "Currently, your budget is fully utilized. You are paying minimum EMIs, which will take longer. Consider adding a small extra monthly payment (even ₹2,000 - ₹5,000) using the simulator slider to see how much faster you could become debt-free!\n\n";
+            advice += "✨ **Healthy Position:** Your financial stress is **low (" + stressScore + "/100)**. You can proceed aggressively with the mathematically optimal **Avalanche Strategy** to maximize interest savings.\n\n";
         }
 
-        if (avMonthsSaved > 0) {
-            advice += String.format("#### 🚀 Why the **Avalanche Strategy** wins for you:\n" +
-                    "- **Time saved:** You become debt-free **%d months sooner** (in %s rather than %s)!\n" +
-                    "- **Interest saved:** You keep **₹%,.0f** in your pocket instead of paying it to lenders.\n" +
-                    "- **Action:** Prioritize extra payments directly to your loan with the highest interest rate (like credit card or personal loan) while keeping minimums active on other loans.", 
-                    avMonthsSaved, avalancheRes.getDebtFreeDate(), baselineRes.getDebtFreeDate(), avIntSaved);
+        if (avalancheRes.getMonthsSaved() > 0) {
+            advice += String.format("#### 🚀 Strategy Performance Comparison:\n" +
+                    "- **Avalanche Strategy:** Prepaying highest-interest first saves you **₹%,.0f** and makes you debt-free **%d months faster** (by %s)!\n" +
+                    "- **Priority-First Strategy:** Eliminating critical risk/harassment first makes you debt-free **%d months faster** (by %s)!\n" +
+                    "- **Cashflow Relief Strategy:** Prepaying highest EMI first makes you debt-free **%d months faster** (by %s), instantly creating monthly budget cushion.", 
+                    avalancheRes.getInterestSaved(), avalancheRes.getMonthsSaved(), avalancheRes.getDebtFreeDate(),
+                    priorityFirstRes.getMonthsSaved(), priorityFirstRes.getDebtFreeDate(),
+                    cashflowRes.getMonthsSaved(), cashflowRes.getDebtFreeDate());
         } else {
-            advice += "#### 🎯 Recommendations:\n" +
-                    "To build a strong payoff trajectory, we recommend the **Snowball Strategy** for emotional momentum (clearing small loans first), or the **Avalanche Strategy** to mathematically minimize interest. Add an extra monthly buffer in the What-If slider to kickstart the visual payoff curve!";
+            advice += "Add an extra monthly payment or simulate a salary hike using the What-If slider to kickstart the visual payoff curve and see exactly how many months you can save!";
         }
 
         AnalysisResponse response = new AnalysisResponse();
@@ -369,6 +450,21 @@ public class AiController {
         response.setAvalanche(avalancheRes);
         response.setSnowball(snowballRes);
         response.setBalanced(balancedRes);
+        
+        // Advanced strategy results
+        response.setPriorityFirst(priorityFirstRes);
+        response.setHybridEmotional(hybridRes);
+        response.setCashflowRelief(cashflowRes);
+        response.setSurvival(survivalRes);
+        response.setRelationshipProtection(relationshipRes);
+        response.setAiAdaptive(adaptiveRes);
+        
+        // Advanced analytics
+        response.setFinancialStressScore(stressScore);
+        response.setHarassmentRiskLevel(harassmentRisk);
+        response.setConfidenceScore(confidenceScore);
+        response.setSkipSuggestions(skipSuggestions);
+        
         response.setAdvice(advice);
 
         if (customText != null && !customText.trim().isEmpty()) {
@@ -383,7 +479,24 @@ public class AiController {
         return response;
     }
 
-    // Standard high-performance Amortization simulator
+    private StrategyResult calculateRelativeResult(StrategyResult baseline, StrategyResult strategy, String name) {
+        double intSaved = Math.max(0.0, baseline.getTotalInterestPaid() - strategy.getTotalInterestPaid());
+        int monthsSaved = Math.max(0, baseline.getDebtFreeMonths() - strategy.getDebtFreeMonths());
+        return new StrategyResult(name, strategy.getDebtFreeMonths(), strategy.getDebtFreeDate(), strategy.getTotalInterestPaid(), intSaved, monthsSaved, strategy.getProjection());
+    }
+
+    private static int getPriorityValue(String priority) {
+        if (priority == null) return 2;
+        switch (priority.toLowerCase()) {
+            case "critical": return 4;
+            case "high": return 3;
+            case "medium": return 2;
+            case "low": return 1;
+            default: return 2;
+        }
+    }
+
+    // Standard high-performance Amortization simulator supporting 8 strategies
     private StrategyResult simulateDebtStrategy(List<Loan> baseLoans, Map<Long, Double> loanBalances, String strategy, double monthlySurplus, double lumpSum, int lumpSumOffset, double salaryHike, int hikeOffset) {
         if (baseLoans.isEmpty()) {
             return new StrategyResult(strategy, 0, "No active debt", 0.0, 0.0, 0, new ArrayList<>());
@@ -446,7 +559,21 @@ public class AiController {
             // 2. Pay minimum EMIs first
             for (SimulatedLoan loan : loans) {
                 if (loan.getBalance() > 0) {
-                    double minEmi = Math.min(loan.getBalance(), loan.emi);
+                    double minEmi = 0.0;
+                    if (strategy.equalsIgnoreCase("Survival")) {
+                        // In survival mode, skip low/medium priority friend or family loans entirely
+                        boolean isFlexible = loan.allowSkipPayment || loan.debtType.equals("friend") || loan.debtType.equals("family");
+                        int priVal = getPriorityValue(loan.priority);
+                        if (priVal <= 2 && isFlexible) {
+                            minEmi = 0.0;
+                        } else {
+                            // Pay absolute minimum required or a highly reduced 30% EMI
+                            minEmi = loan.minimumRequired > 0 ? Math.min(loan.getBalance(), loan.minimumRequired) 
+                                           : Math.min(loan.getBalance(), Math.max(100.0, loan.emi * 0.3));
+                        }
+                    } else {
+                        minEmi = Math.min(loan.getBalance(), loan.emi);
+                    }
                     loan.pay(minEmi);
                     monthTotalPaid += minEmi;
                 }
@@ -460,6 +587,40 @@ public class AiController {
                 } else if (strategy.equalsIgnoreCase("Snowball")) {
                     // Sort by remaining balance ascending
                     loans.sort((a, b) -> Double.compare(a.getBalance(), b.getBalance()));
+                } else if (strategy.equalsIgnoreCase("PriorityFirst") || strategy.equalsIgnoreCase("Priority")) {
+                    // Sort by Priority descending, then highest EMI descending
+                    loans.sort((a, b) -> {
+                        int pA = getPriorityValue(a.priority);
+                        int pB = getPriorityValue(b.priority);
+                        if (pA != pB) return Integer.compare(pB, pA);
+                        return Double.compare(b.emi, a.emi);
+                    });
+                } else if (strategy.equalsIgnoreCase("Hybrid") || strategy.equalsIgnoreCase("HybridEmotional")) {
+                    // Weighted formula: Math + Emotion
+                    loans.sort((a, b) -> {
+                        double sA = (a.rate * 0.3) + (getPriorityValue(a.priority) * 20 * 0.3) + (a.emotionalStressScore * 0.2) + (a.penaltyRiskScore * 0.2);
+                        double sB = (b.rate * 0.3) + (getPriorityValue(b.priority) * 20 * 0.3) + (b.emotionalStressScore * 0.2) + (b.penaltyRiskScore * 0.2);
+                        return Double.compare(sB, sA);
+                    });
+                } else if (strategy.equalsIgnoreCase("CashflowRelief")) {
+                    // Close highest EMI loans first
+                    loans.sort((a, b) -> Double.compare(b.emi, a.emi));
+                } else if (strategy.equalsIgnoreCase("RelationshipProtection") || strategy.equalsIgnoreCase("Relationship")) {
+                    // Pay personal loans first to protect social relations
+                    loans.sort((a, b) -> {
+                        boolean aPers = a.debtType.equals("friend") || a.debtType.equals("family");
+                        boolean bPers = b.debtType.equals("friend") || b.debtType.equals("family");
+                        if (aPers && !bPers) return -1;
+                        if (!aPers && bPers) return 1;
+                        return Double.compare(b.relationshipRisk, a.relationshipRisk);
+                    });
+                } else if (strategy.equalsIgnoreCase("AiAdaptive") || strategy.equalsIgnoreCase("Adaptive")) {
+                    // Combine interest rate and stress reduction dynamically
+                    loans.sort((a, b) -> {
+                        double sA = (a.rate * 0.5) + (a.emotionalStressScore * 0.5);
+                        double sB = (b.rate * 0.5) + (b.emotionalStressScore * 0.5);
+                        return Double.compare(sB, sA);
+                    });
                 } else if (strategy.equalsIgnoreCase("Balanced")) {
                     // Proportional split
                     double totalActiveBalance = loans.stream().filter(l -> l.getBalance() > 0).mapToDouble(SimulatedLoan::getBalance).sum();
@@ -476,8 +637,8 @@ public class AiController {
                     }
                 }
 
-                // Apply sorted priority allocation (Avalanche or Snowball)
-                if (!strategy.equalsIgnoreCase("Balanced") && activeExtraPool > 0) {
+                // Apply sorted priority allocation (for all strategies except Balanced/Survival)
+                if (!strategy.equalsIgnoreCase("Balanced") && !strategy.equalsIgnoreCase("Survival") && activeExtraPool > 0) {
                     for (SimulatedLoan loan : loans) {
                         if (loan.getBalance() > 0 && activeExtraPool > 0) {
                             double extraPaid = Math.min(loan.getBalance(), activeExtraPool);
@@ -509,12 +670,28 @@ public class AiController {
         double balance;
         double rate;
         double emi;
+        String priority;
+        String debtType;
+        double flexibilityScore;
+        double emotionalStressScore;
+        double penaltyRiskScore;
+        double relationshipRisk;
+        double minimumRequired;
+        boolean allowSkipPayment;
 
         SimulatedLoan(Loan loan, double currentBalance) {
             this.name = loan.getName();
             this.balance = currentBalance;
-            this.rate = loan.getRate();
-            this.emi = loan.getEmi();
+            this.rate = loan.getRate() != null ? loan.getRate() : 0.0;
+            this.emi = loan.getEmi() != null ? loan.getEmi() : 0.0;
+            this.priority = loan.getPriority();
+            this.debtType = loan.getDebtType();
+            this.flexibilityScore = loan.getFlexibilityScore();
+            this.emotionalStressScore = loan.getEmotionalStressScore();
+            this.penaltyRiskScore = loan.getPenaltyRiskScore();
+            this.relationshipRisk = loan.getRelationshipRisk();
+            this.minimumRequired = loan.getMinimumRequired() != null ? loan.getMinimumRequired() : 0.0;
+            this.allowSkipPayment = loan.getAllowSkipPayment() != null ? loan.getAllowSkipPayment() : false;
         }
 
         double getBalance() { return balance; }

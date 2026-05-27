@@ -220,6 +220,20 @@ public class LoanController {
             if (loanDetails.getStartDate() != null) {
                 loan.setStartDate(loanDetails.getStartDate());
             }
+            
+            // Advanced Payoff Planner Fields
+            loan.setOutstandingAmount(loanDetails.getOutstandingAmount());
+            loan.setDebtType(loanDetails.getDebtType());
+            loan.setPriority(loanDetails.getPriority());
+            loan.setFlexibilityScore(loanDetails.getFlexibilityScore());
+            loan.setEmotionalStressScore(loanDetails.getEmotionalStressScore());
+            loan.setPenaltyRiskScore(loanDetails.getPenaltyRiskScore());
+            loan.setRelationshipRisk(loanDetails.getRelationshipRisk());
+            loan.setAllowSkipPayment(loanDetails.getAllowSkipPayment());
+            loan.setMinimumRequired(loanDetails.getMinimumRequired());
+            loan.setDueDate(loanDetails.getDueDate());
+            loan.setSettlementEligible(loanDetails.getSettlementEligible());
+            
             Loan saved = loanRepository.save(loan);
             return ResponseEntity.ok(saved);
         }

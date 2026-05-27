@@ -89,6 +89,19 @@ interface Loan {
   lender: string;
   type: string;
   prepayPriority?: 'HIGH' | 'MEDIUM' | 'LOW' | 'EXCLUDE';
+  
+  // Advanced Payoff Planner Variables
+  outstandingAmount?: number;
+  debtType?: 'credit_card' | 'personal_loan' | 'friend' | 'family' | 'salary_advance' | 'bnpl';
+  priority?: 'critical' | 'high' | 'medium' | 'low';
+  flexibilityScore?: number;
+  emotionalStressScore?: number;
+  penaltyRiskScore?: number;
+  relationshipRisk?: number;
+  allowSkipPayment?: boolean;
+  minimumRequired?: number;
+  dueDate?: string;
+  settlementEligible?: boolean;
 }
 
 interface LoanWithPayments {
@@ -151,8 +164,19 @@ interface AnalysisData {
   avalanche: StrategyResult;
   snowball: StrategyResult;
   balanced: StrategyResult;
+  priorityFirst?: StrategyResult;
+  hybridEmotional?: StrategyResult;
+  cashflowRelief?: StrategyResult;
+  survival?: StrategyResult;
+  relationshipProtection?: StrategyResult;
+  aiAdaptive?: StrategyResult;
+  financialStressScore?: number;
+  harassmentRiskLevel?: string;
+  confidenceScore?: number;
+  skipSuggestions?: string[];
   advice: string;
 }
+
 
 export default function App() {
   // Navigation & Wizard State
@@ -214,7 +238,18 @@ export default function App() {
     emi: '',
     lender: '',
     type: 'Home',
-    prepayPriority: 'MEDIUM' as 'HIGH' | 'MEDIUM' | 'LOW' | 'EXCLUDE'
+    prepayPriority: 'MEDIUM' as 'HIGH' | 'MEDIUM' | 'LOW' | 'EXCLUDE',
+    outstandingAmount: '',
+    debtType: 'personal_loan' as 'credit_card' | 'personal_loan' | 'friend' | 'family' | 'salary_advance' | 'bnpl',
+    priority: 'medium' as 'critical' | 'high' | 'medium' | 'low',
+    flexibilityScore: 50,
+    emotionalStressScore: 50,
+    penaltyRiskScore: 50,
+    relationshipRisk: 50,
+    allowSkipPayment: false,
+    minimumRequired: '',
+    dueDate: '',
+    settlementEligible: false
   });
 
   const [newLoan, setNewLoan] = useState({
@@ -225,7 +260,18 @@ export default function App() {
     emi: '',
     lender: '',
     type: 'Home',
-    prepayPriority: 'MEDIUM' as 'HIGH' | 'MEDIUM' | 'LOW' | 'EXCLUDE'
+    prepayPriority: 'MEDIUM' as 'HIGH' | 'MEDIUM' | 'LOW' | 'EXCLUDE',
+    outstandingAmount: '',
+    debtType: 'personal_loan' as 'credit_card' | 'personal_loan' | 'friend' | 'family' | 'salary_advance' | 'bnpl',
+    priority: 'medium' as 'critical' | 'high' | 'medium' | 'low',
+    flexibilityScore: 50,
+    emotionalStressScore: 50,
+    penaltyRiskScore: 50,
+    relationshipRisk: 50,
+    allowSkipPayment: false,
+    minimumRequired: '',
+    dueDate: '',
+    settlementEligible: false
   });
 
   const [scheduleFile, setScheduleFile] = useState<File | null>(null);
@@ -246,7 +292,8 @@ export default function App() {
   const toggleLoanCollapse = (id: number) => {
     setCollapsedLoanIds(prev => ({ ...prev, [id]: !prev[id] }));
   };
-  const [selectedStrategy, setSelectedStrategy] = useState<'Avalanche' | 'Snowball' | 'Balanced' | 'Baseline'>('Avalanche');
+  const [selectedStrategy, setSelectedStrategy] = useState<'Avalanche' | 'Snowball' | 'Balanced' | 'Baseline' | 'Priority' | 'Hybrid' | 'CashflowRelief' | 'Survival' | 'Relationship' | 'Adaptive'>('Avalanche');
+
   const [showAllSimMonths, setShowAllSimMonths] = useState<boolean>(false);
 
   const getPriorityBadge = (priority?: string) => {
@@ -700,14 +747,32 @@ Be generous in interpretation. "joining bonus", "sign-on bonus", "relocation all
 
     const activeExtraPool = surplus + effectiveExtraMonthly;
 
+    const getPriorityVal = (priority?: string) => {
+      if (!priority) return 2;
+      const lower = priority.toLowerCase();
+      if (lower === 'critical') return 4;
+      if (lower === 'high') return 3;
+      if (lower === 'medium') return 2;
+      if (lower === 'low') return 1;
+      return 2;
+    };
+
     const runSim = (strategy: string) => {
       const localLoans = loansWithPayments.map(lw => ({
         name: lw.loan.name,
         balance: lw.payments.filter(p => !p.isPaid).reduce((s, p) => s + p.amount, 0),
-        rate: lw.loan.rate,
-        emi: lw.loan.emi,
-        prepayPriority: lw.loan.prepayPriority || 'MEDIUM'
-      })).filter(l => l.balance > 0 && !(l.emi === 0 && l.prepayPriority === 'EXCLUDE'));
+        rate: lw.loan.rate || 0,
+        emi: lw.loan.emi || 0,
+        prepayPriority: lw.loan.prepayPriority || 'MEDIUM',
+        priority: lw.loan.priority || 'medium',
+        debtType: lw.loan.debtType || 'personal_loan',
+        flexibilityScore: lw.loan.flexibilityScore || 50,
+        emotionalStressScore: lw.loan.emotionalStressScore || 50,
+        penaltyRiskScore: lw.loan.penaltyRiskScore || 50,
+        relationshipRisk: lw.loan.relationshipRisk || 50,
+        minimumRequired: lw.loan.minimumRequired || 0,
+        allowSkipPayment: lw.loan.allowSkipPayment || false
+      })).filter(l => l.balance > 0);
 
       if (localLoans.length === 0) {
         return {
@@ -720,13 +785,6 @@ Be generous in interpretation. "joining bonus", "sign-on bonus", "relocation all
           projection: []
         };
       }
-
-      const priorityWeight: Record<string, number> = {
-        HIGH: 3,
-        MEDIUM: 2,
-        LOW: 1,
-        EXCLUDE: 0
-      };
 
       const points: ProjectionPoint[] = [];
       let totalInterest = 0;
@@ -772,7 +830,20 @@ Be generous in interpretation. "joining bonus", "sign-on bonus", "relocation all
         const minPayments: Record<string, number> = {};
         for (const l of localLoans) {
           if (l.balance > 0) {
-            const minPay = Math.min(l.balance, l.emi);
+            let minPay = 0;
+            if (strategy === 'Survival') {
+              const isFlexible = l.allowSkipPayment || l.debtType === 'friend' || l.debtType === 'family';
+              const pVal = getPriorityVal(l.priority);
+              if (pVal <= 2 && isFlexible) {
+                minPay = 0;
+              } else {
+                minPay = l.minimumRequired > 0 
+                  ? Math.min(l.balance, l.minimumRequired) 
+                  : Math.min(l.balance, Math.max(100, l.emi * 0.3));
+              }
+            } else {
+              minPay = Math.min(l.balance, l.emi);
+            }
             l.balance -= minPay;
             monthTotalPaid += minPay;
             minPayments[l.name] = minPay;
@@ -781,7 +852,7 @@ Be generous in interpretation. "joining bonus", "sign-on bonus", "relocation all
           }
         }
 
-        // 3. Priority Allocation
+        // 3. Prepayment Pool Allocation
         const extraPayments: Record<string, number> = {};
         for (const l of localLoans) {
           extraPayments[l.name] = 0;
@@ -789,52 +860,64 @@ Be generous in interpretation. "joining bonus", "sign-on bonus", "relocation all
 
         if (activeExtra > 0) {
           if (strategy === 'Avalanche') {
-            localLoans.sort((a, b) => {
-              const pA = priorityWeight[a.prepayPriority] || 2;
-              const pB = priorityWeight[b.prepayPriority] || 2;
-              if (pA !== pB) return pB - pA;
-              return b.rate - a.rate;
-            });
+            localLoans.sort((a, b) => b.rate - a.rate);
           } else if (strategy === 'Snowball') {
+            localLoans.sort((a, b) => a.balance - b.balance);
+          } else if (strategy === 'PriorityFirst' || strategy === 'Priority') {
             localLoans.sort((a, b) => {
-              const pA = priorityWeight[a.prepayPriority] || 2;
-              const pB = priorityWeight[b.prepayPriority] || 2;
+              const pA = getPriorityVal(a.priority);
+              const pB = getPriorityVal(b.priority);
               if (pA !== pB) return pB - pA;
-              return a.balance - b.balance;
+              return b.emi - a.emi;
+            });
+          } else if (strategy === 'Hybrid' || strategy === 'HybridEmotional') {
+            localLoans.sort((a, b) => {
+              const sA = (a.rate * 0.3) + (getPriorityVal(a.priority) * 20 * 0.3) + (a.emotionalStressScore * 0.2) + (a.penaltyRiskScore * 0.2);
+              const sB = (b.rate * 0.3) + (getPriorityVal(b.priority) * 20 * 0.3) + (b.emotionalStressScore * 0.2) + (b.penaltyRiskScore * 0.2);
+              return sB - sA;
+            });
+          } else if (strategy === 'CashflowRelief') {
+            localLoans.sort((a, b) => b.emi - a.emi);
+          } else if (strategy === 'RelationshipProtection' || strategy === 'Relationship') {
+            localLoans.sort((a, b) => {
+              const aPers = a.debtType === 'friend' || a.debtType === 'family';
+              const bPers = b.debtType === 'friend' || b.debtType === 'family';
+              if (aPers && !bPers) return -1;
+              if (!aPers && bPers) return 1;
+              return b.relationshipRisk - a.relationshipRisk;
+            });
+          } else if (strategy === 'AiAdaptive' || strategy === 'Adaptive') {
+            localLoans.sort((a, b) => {
+              const sA = (a.rate * 0.5) + (a.emotionalStressScore * 0.5);
+              const sB = (b.rate * 0.5) + (b.emotionalStressScore * 0.5);
+              return sB - sA;
             });
           } else if (strategy === 'Balanced') {
-            // Find highest active priority group eligible for extra payments (not EXCLUDE)
-            const eligibleLoansForExtra = localLoans.filter(l => l.balance > 0 && l.prepayPriority !== 'EXCLUDE');
-            const maxWeight = eligibleLoansForExtra.reduce((max, l) => {
-              const w = priorityWeight[l.prepayPriority] || 2;
-              return w > max ? w : max;
-            }, 0);
-
-            const loansToPayExtra = eligibleLoansForExtra.filter(l => (priorityWeight[l.prepayPriority] || 2) === maxWeight);
-            const sumBalance = loansToPayExtra.reduce((sum, l) => sum + l.balance, 0);
-            
-            if (sumBalance > 0) {
+            const totalActiveBalance = localLoans.filter(l => l.balance > 0).reduce((sum, l) => sum + l.balance, 0);
+            if (totalActiveBalance > 0) {
               let extraPaid = 0;
-              for (const l of loansToPayExtra) {
-                const share = (l.balance / sumBalance) * activeExtra;
-                const paid = Math.min(l.balance, share);
-                l.balance -= paid;
-                monthTotalPaid += paid;
-                extraPaid += paid;
-                extraPayments[l.name] = (extraPayments[l.name] || 0) + paid;
+              for (const l of localLoans) {
+                if (l.balance > 0) {
+                  const share = (l.balance / totalActiveBalance) * activeExtra;
+                  const paid = Math.min(l.balance, share);
+                  l.balance -= paid;
+                  monthTotalPaid += paid;
+                  extraPaid += paid;
+                  extraPayments[l.name] = paid;
+                }
               }
               activeExtra = Math.max(0, activeExtra - extraPaid);
             }
           }
 
-          if (strategy !== 'Balanced') {
+          if (strategy !== 'Balanced' && strategy !== 'Survival' && activeExtra > 0) {
             for (const l of localLoans) {
-              if (l.balance > 0 && activeExtra > 0 && l.prepayPriority !== 'EXCLUDE') {
+              if (l.balance > 0 && activeExtra > 0) {
                 const paid = Math.min(l.balance, activeExtra);
                 l.balance -= paid;
                 monthTotalPaid += paid;
                 activeExtra -= paid;
-                extraPayments[l.name] = (extraPayments[l.name] || 0) + paid;
+                extraPayments[l.name] = paid;
               }
             }
           }
@@ -878,22 +961,68 @@ Be generous in interpretation. "joining bonus", "sign-on bonus", "relocation all
     const avalanche = runSim('Avalanche');
     const snowball = runSim('Snowball');
     const balanced = runSim('Balanced');
+    const priorityFirst = runSim('PriorityFirst');
+    const hybridEmotional = runSim('Hybrid');
+    const cashflowRelief = runSim('CashflowRelief');
+    const survival = runSim('Survival');
+    const relationshipProtection = runSim('RelationshipProtection');
+    const aiAdaptive = runSim('AiAdaptive');
 
-    // Attach relative metrics
-    avalanche.interestSaved = Math.max(0, baseline.totalInterestPaid - avalanche.totalInterestPaid);
-    avalanche.monthsSaved = Math.max(0, baseline.debtFreeMonths - avalanche.debtFreeMonths);
+    const makeRelative = (strat: any) => {
+      strat.interestSaved = Math.max(0, baseline.totalInterestPaid - strat.totalInterestPaid);
+      strat.monthsSaved = Math.max(0, baseline.debtFreeMonths - strat.debtFreeMonths);
+      return strat;
+    };
 
-    snowball.interestSaved = Math.max(0, baseline.totalInterestPaid - snowball.totalInterestPaid);
-    snowball.monthsSaved = Math.max(0, baseline.debtFreeMonths - snowball.debtFreeMonths);
+    const formattedAvalanche = makeRelative(avalanche);
+    const formattedSnowball = makeRelative(snowball);
+    const formattedBalanced = makeRelative(balanced);
+    const formattedPriority = makeRelative(priorityFirst);
+    const formattedHybrid = makeRelative(hybridEmotional);
+    const formattedCashflow = makeRelative(cashflowRelief);
+    const formattedSurvival = makeRelative(survival);
+    const formattedRelation = makeRelative(relationshipProtection);
+    const formattedAdaptive = makeRelative(aiAdaptive);
 
-    balanced.interestSaved = Math.max(0, baseline.totalInterestPaid - balanced.totalInterestPaid);
-    balanced.monthsSaved = Math.max(0, baseline.debtFreeMonths - balanced.debtFreeMonths);
+    // Advanced Metrics calculations
+    const emiRatio = totalIncome > 0 ? (totalEmi / totalIncome) * 100 : 0;
+    let stressScore = (emiRatio * 0.5) + (totalDebtValue > 100000 ? 30 : (totalDebtValue / 100000) * 30);
+    const avgStress = loansWithPayments.reduce((s, lw) => s + (lw.loan.emotionalStressScore || 50), 0) / (loansWithPayments.length || 1);
+    stressScore = Math.round(stressScore * 0.6 + avgStress * 0.4);
 
-    const adviceText = `### 💡 Smart Financial Assessment\n\n${nlpAckMsg ? `**Parsed from your input:** *${nlpAckMsg.trim()}*\n\n` : ''}Your monthly net take-home is **${userProfile.currency}${totalIncome.toLocaleString()}** against basic expenses of **${userProfile.currency}${totalExpenses.toLocaleString()}** and monthly EMIs of **${userProfile.currency}${totalEmi.toLocaleString()}**.${effectiveLumpSum > 0 ? `\n\n💰 A lump-sum of **${userProfile.currency}${effectiveLumpSum.toLocaleString()}** will be applied in month ${effectiveLumpSumOffset} to slash your principal.` : ''}${effectiveSalaryHikeAmt > 0 ? `\n\n📈 Your effective monthly surplus increases by **+${userProfile.currency}${Math.round(effectiveSalaryHikeAmt).toLocaleString()}** from month ${effectiveLumpSumOffset} onward.` : ''}\n\n${
-      avalanche.monthsSaved > 0 
-        ? `#### 🚀 Why the **Avalanche Strategy** wins for you:\n- **Time saved:** You become debt-free **${avalanche.monthsSaved} months sooner** (in ${avalanche.debtFreeDate} rather than ${baseline.debtFreeDate})!\n- **Interest saved:** You keep **${userProfile.currency}${avalanche.interestSaved.toLocaleString()}** in your pocket instead of paying it to lenders.\n- **Action:** Prioritize extra payments directly to your loan with the highest interest rate while keeping minimums active on other loans.` 
-        : `To build a strong payoff trajectory, allocate an extra monthly buffer in the What-If slider to kickstart the visual payoff curve!`
-    }`;
+    let harassmentRisk = 'LOW';
+    const maxPenalty = loansWithPayments.reduce((max, lw) => Math.max(max, lw.loan.penaltyRiskScore || 50), 0);
+    if (stressScore > 75 && maxPenalty > 70) {
+        harassmentRisk = 'AGGRESSIVE COLLECTION RISK';
+    } else if (maxPenalty > 50 || emiRatio > 60) {
+        harassmentRisk = 'MODERATE RISK';
+    }
+
+    const skipSuggestions: string[] = [];
+    loansWithPayments.forEach(lw => {
+      if (lw.loan.allowSkipPayment || lw.loan.debtType === 'friend' || lw.loan.debtType === 'family') {
+        if ((lw.loan.flexibilityScore || 50) > 60) {
+          skipSuggestions.push(`You may safely defer payment on ${lw.loan.name} (${lw.loan.lender || 'Personal Lender'}) — flexibility score is high (${lw.loan.flexibilityScore || 50}%).`);
+        }
+      }
+    });
+    if (skipSuggestions.length === 0) skipSuggestions.push("All debts require standard payments this cycle.");
+
+    const confidenceScore = Math.round(Math.max(20, Math.min(99, 60 + (surplus / (totalIncome || 1)) * 200 - stressScore * 0.2)));
+
+    const adviceText = `### 💡 AI Debt Recovery & Financial Survival Coaching (Local Mode)
+
+${nlpAckMsg ? `**Parsed from your input:** *${nlpAckMsg.trim()}*\n\n` : ''}Your monthly net take-home is **${userProfile.currency}${totalIncome.toLocaleString()}** against basic expenses of **${userProfile.currency}${totalExpenses.toLocaleString()}** and monthly EMIs of **${userProfile.currency}${totalEmi.toLocaleString()}**.
+
+${stressScore > 70 
+  ? `⚠️ **Critical Alert:** Your financial stress is **very high (${stressScore}/100)**. Consider executing **Survival Mode** to skip flexible payments or **Priority-First** to resolve collections first.`
+  : `✨ **Healthy Position:** Your financial stress is **low (${stressScore}/100)**. Consider continuing aggressively with **Avalanche** to maximize interest savings.`
+}
+
+#### 🚀 Payoff Strategy Impact:
+- **Avalanche Strategy:** Prepaying highest-interest first saves you **${userProfile.currency}${formattedAvalanche.interestSaved.toLocaleString()}** and makes you debt-free **${formattedAvalanche.monthsSaved} months sooner**!
+- **Priority-First Strategy:** Eliminating critical risk first makes you debt-free **${formattedPriority.monthsSaved} months sooner**!
+- **Cashflow Relief:** Eliminating highest EMI first makes you debt-free **${formattedCashflow.monthsSaved} months sooner**!`;
 
     setAiAnalysis({
       monthlyIncome: totalIncome,
@@ -901,9 +1030,19 @@ Be generous in interpretation. "joining bonus", "sign-on bonus", "relocation all
       totalDebt: totalDebtValue,
       surplusSavings: surplus,
       baseline,
-      avalanche,
-      snowball,
-      balanced,
+      avalanche: formattedAvalanche,
+      snowball: formattedSnowball,
+      balanced: formattedBalanced,
+      priorityFirst: formattedPriority,
+      hybridEmotional: formattedHybrid,
+      cashflowRelief: formattedCashflow,
+      survival: formattedSurvival,
+      relationshipProtection: formattedRelation,
+      aiAdaptive: formattedAdaptive,
+      financialStressScore: stressScore,
+      harassmentRiskLevel: harassmentRisk,
+      confidenceScore,
+      skipSuggestions,
       advice: adviceText
     });
   };
@@ -1079,6 +1218,21 @@ Be generous in interpretation. "joining bonus", "sign-on bonus", "relocation all
   const handleAddLoan = async (e: React.FormEvent) => {
     e.preventDefault();
 
+    const resetForm = {
+      name: '', principal: '', rate: '', tenure: '', emi: '', lender: '', type: 'Home', prepayPriority: 'MEDIUM' as 'HIGH' | 'MEDIUM' | 'LOW' | 'EXCLUDE',
+      outstandingAmount: '',
+      debtType: 'personal_loan' as 'credit_card' | 'personal_loan' | 'friend' | 'family' | 'salary_advance' | 'bnpl',
+      priority: 'medium' as 'critical' | 'high' | 'medium' | 'low',
+      flexibilityScore: 50,
+      emotionalStressScore: 50,
+      penaltyRiskScore: 50,
+      relationshipRisk: 50,
+      allowSkipPayment: false,
+      minimumRequired: '',
+      dueDate: '',
+      settlementEligible: false
+    };
+
     if (loanRegistrationMode === 'flexible') {
       const principalVal = parseFloat(newLoan.principal) || 0;
       if (!newLoan.name || principalVal <= 0) return;
@@ -1093,7 +1247,19 @@ Be generous in interpretation. "joining bonus", "sign-on bonus", "relocation all
         lender: newLoan.lender || 'Private Lender',
         type: newLoan.type || 'Friend',
         startDate: new Date().toISOString().split('T')[0],
-        prepayPriority: newLoan.prepayPriority || 'EXCLUDE'
+        prepayPriority: newLoan.prepayPriority || 'EXCLUDE',
+        
+        // Advanced variables
+        outstandingAmount: parseFloat(newLoan.outstandingAmount) || principalVal,
+        debtType: newLoan.debtType || 'friend',
+        priority: newLoan.priority || 'low',
+        flexibilityScore: newLoan.flexibilityScore,
+        emotionalStressScore: newLoan.emotionalStressScore,
+        penaltyRiskScore: newLoan.penaltyRiskScore,
+        relationshipRisk: newLoan.relationshipRisk,
+        allowSkipPayment: newLoan.allowSkipPayment,
+        minimumRequired: parseFloat(newLoan.minimumRequired) || 0,
+        settlementEligible: newLoan.settlementEligible
       };
 
       if (isUsingFallback) {
@@ -1108,19 +1274,32 @@ Be generous in interpretation. "joining bonus", "sign-on bonus", "relocation all
           startDate: loanPayload.startDate,
           lender: loanPayload.lender,
           type: loanPayload.type,
-          prepayPriority: loanPayload.prepayPriority
+          prepayPriority: loanPayload.prepayPriority,
+          
+          // Advanced variables
+          outstandingAmount: loanPayload.outstandingAmount,
+          debtType: loanPayload.debtType,
+          priority: loanPayload.priority,
+          flexibilityScore: loanPayload.flexibilityScore,
+          emotionalStressScore: loanPayload.emotionalStressScore,
+          penaltyRiskScore: loanPayload.penaltyRiskScore,
+          relationshipRisk: loanPayload.relationshipRisk,
+          allowSkipPayment: loanPayload.allowSkipPayment,
+          minimumRequired: loanPayload.minimumRequired,
+          settlementEligible: loanPayload.settlementEligible
         };
 
-        const generatedPayments: EmiPayment[] = [{
-          id: Date.now() + 1000,
-          loanId: addedLoan.id,
-          dueDate: loanPayload.startDate,
-          paidDate: null,
-          amount: principalVal,
-          isPaid: false
+        const updated = [...loansWithPayments, {
+          loan: addedLoan,
+          payments: [{
+            id: Date.now() + 1000,
+            loanId: addedLoan.id,
+            dueDate: addedLoan.startDate,
+            paidDate: null,
+            amount: principalVal,
+            isPaid: false
+          }]
         }];
-
-        const updated = [...loansWithPayments, { loan: addedLoan, payments: generatedPayments }];
         setLoansWithPayments(updated);
         localStorage.setItem('loans', JSON.stringify(updated));
         calculateAiProjectionsLocal();
@@ -1141,7 +1320,7 @@ Be generous in interpretation. "joining bonus", "sign-on bonus", "relocation all
         loadAllData();
       }
 
-      setNewLoan({ name: '', principal: '', rate: '', tenure: '', emi: '', lender: '', type: 'Home', prepayPriority: 'MEDIUM' });
+      setNewLoan(resetForm);
       return;
     }
 
@@ -1176,7 +1355,19 @@ Be generous in interpretation. "joining bonus", "sign-on bonus", "relocation all
         lender: newLoan.lender || 'Slice Card',
         type: newLoan.type,
         startDate: sliceMonthsList[0].dateStr,
-        prepayPriority: newLoan.prepayPriority || 'MEDIUM'
+        prepayPriority: newLoan.prepayPriority || 'MEDIUM',
+        
+        // Advanced variables
+        outstandingAmount: parseFloat(newLoan.outstandingAmount) || totalPrincipal,
+        debtType: newLoan.debtType || 'bnpl',
+        priority: newLoan.priority || 'high',
+        flexibilityScore: newLoan.flexibilityScore,
+        emotionalStressScore: newLoan.emotionalStressScore,
+        penaltyRiskScore: newLoan.penaltyRiskScore,
+        relationshipRisk: newLoan.relationshipRisk,
+        allowSkipPayment: newLoan.allowSkipPayment,
+        minimumRequired: parseFloat(newLoan.minimumRequired) || 0,
+        settlementEligible: newLoan.settlementEligible
       };
 
       if (isUsingFallback) {
@@ -1191,7 +1382,19 @@ Be generous in interpretation. "joining bonus", "sign-on bonus", "relocation all
           startDate: loanPayload.startDate,
           lender: loanPayload.lender,
           type: loanPayload.type,
-          prepayPriority: newLoan.prepayPriority || 'MEDIUM'
+          prepayPriority: newLoan.prepayPriority || 'MEDIUM',
+          
+          // Advanced variables
+          outstandingAmount: loanPayload.outstandingAmount,
+          debtType: loanPayload.debtType,
+          priority: loanPayload.priority,
+          flexibilityScore: loanPayload.flexibilityScore,
+          emotionalStressScore: loanPayload.emotionalStressScore,
+          penaltyRiskScore: loanPayload.penaltyRiskScore,
+          relationshipRisk: loanPayload.relationshipRisk,
+          allowSkipPayment: loanPayload.allowSkipPayment,
+          minimumRequired: loanPayload.minimumRequired,
+          settlementEligible: loanPayload.settlementEligible
         };
 
         const generatedPayments: EmiPayment[] = parsedPayments.map((p, i) => ({
@@ -1217,7 +1420,7 @@ Be generous in interpretation. "joining bonus", "sign-on bonus", "relocation all
       }
 
       // Reset form
-      setNewLoan({ name: '', principal: '', rate: '', tenure: '', emi: '', lender: '', type: 'Home', prepayPriority: 'MEDIUM' });
+      setNewLoan(resetForm);
       setSliceAmounts({});
       return;
     }
@@ -1243,7 +1446,19 @@ Be generous in interpretation. "joining bonus", "sign-on bonus", "relocation all
       lender: newLoan.lender || 'Private Lender',
       type: newLoan.type,
       startDate: new Date().toISOString().split('T')[0],
-      prepayPriority: newLoan.prepayPriority || 'MEDIUM'
+      prepayPriority: newLoan.prepayPriority || 'MEDIUM',
+      
+      // Advanced variables
+      outstandingAmount: parseFloat(newLoan.outstandingAmount) || principalValue,
+      debtType: newLoan.debtType || 'personal_loan',
+      priority: newLoan.priority || 'medium',
+      flexibilityScore: newLoan.flexibilityScore,
+      emotionalStressScore: newLoan.emotionalStressScore,
+      penaltyRiskScore: newLoan.penaltyRiskScore,
+      relationshipRisk: newLoan.relationshipRisk,
+      allowSkipPayment: newLoan.allowSkipPayment,
+      minimumRequired: parseFloat(newLoan.minimumRequired) || 0,
+      settlementEligible: newLoan.settlementEligible
     };
 
     if (isUsingFallback) {
@@ -1264,7 +1479,19 @@ Be generous in interpretation. "joining bonus", "sign-on bonus", "relocation all
         startDate: payload.startDate,
         lender: payload.lender,
         type: payload.type,
-        prepayPriority: newLoan.prepayPriority || 'MEDIUM'
+        prepayPriority: newLoan.prepayPriority || 'MEDIUM',
+        
+        // Advanced variables
+        outstandingAmount: payload.outstandingAmount,
+        debtType: payload.debtType,
+        priority: payload.priority,
+        flexibilityScore: payload.flexibilityScore,
+        emotionalStressScore: payload.emotionalStressScore,
+        penaltyRiskScore: payload.penaltyRiskScore,
+        relationshipRisk: payload.relationshipRisk,
+        allowSkipPayment: payload.allowSkipPayment,
+        minimumRequired: payload.minimumRequired,
+        settlementEligible: payload.settlementEligible
       };
 
       const generatedPayments: EmiPayment[] = Array.from({ length: n }, (_, i) => ({
@@ -1289,7 +1516,7 @@ Be generous in interpretation. "joining bonus", "sign-on bonus", "relocation all
       loadAllData();
     }
 
-    setNewLoan({ name: '', principal: '', rate: '', tenure: '', emi: '', lender: '', type: 'Home', prepayPriority: 'MEDIUM' });
+    setNewLoan(resetForm);
   };
 
   const applyDetectedScheduleLoan = (result: ScheduleUploadResult) => {
@@ -1475,7 +1702,19 @@ Be generous in interpretation. "joining bonus", "sign-on bonus", "relocation all
       emi: parseFloat(editLoanForm.emi) || 0,
       lender: editLoanForm.lender,
       type: editLoanForm.type,
-      prepayPriority: editLoanForm.prepayPriority
+      prepayPriority: editLoanForm.prepayPriority,
+      
+      // Advanced Payoff Planner Fields
+      outstandingAmount: parseFloat(editLoanForm.outstandingAmount) || parseFloat(editLoanForm.principal) || 0,
+      debtType: editLoanForm.debtType,
+      priority: editLoanForm.priority,
+      flexibilityScore: editLoanForm.flexibilityScore,
+      emotionalStressScore: editLoanForm.emotionalStressScore,
+      penaltyRiskScore: editLoanForm.penaltyRiskScore,
+      relationshipRisk: editLoanForm.relationshipRisk,
+      allowSkipPayment: editLoanForm.allowSkipPayment,
+      minimumRequired: parseFloat(editLoanForm.minimumRequired) || 0,
+      settlementEligible: editLoanForm.settlementEligible
     };
 
     if (isUsingFallback) {
@@ -1648,13 +1887,25 @@ Be generous in interpretation. "joining bonus", "sign-on bonus", "relocation all
       Avalanche: number;
       Snowball: number;
       Balanced: number;
+      Priority?: number;
+      Hybrid?: number;
+      CashflowRelief?: number;
+      Survival?: number;
+      Relationship?: number;
+      Adaptive?: number;
     }
     const merged: MergedPoint[] = [];
     const maxMonths = Math.max(
       aiAnalysis.baseline?.projection?.length || 0,
       aiAnalysis.avalanche?.projection?.length || 0,
       aiAnalysis.snowball?.projection?.length || 0,
-      aiAnalysis.balanced?.projection?.length || 0
+      aiAnalysis.balanced?.projection?.length || 0,
+      aiAnalysis.priorityFirst?.projection?.length || 0,
+      aiAnalysis.hybridEmotional?.projection?.length || 0,
+      aiAnalysis.cashflowRelief?.projection?.length || 0,
+      aiAnalysis.survival?.projection?.length || 0,
+      aiAnalysis.relationshipProtection?.projection?.length || 0,
+      aiAnalysis.aiAdaptive?.projection?.length || 0
     );
 
     const today = new Date();
@@ -1674,10 +1925,17 @@ Be generous in interpretation. "joining bonus", "sign-on bonus", "relocation all
         'Avalanche': getBalanceAtIndex(aiAnalysis.avalanche?.projection, i),
         'Snowball': getBalanceAtIndex(aiAnalysis.snowball?.projection, i),
         'Balanced': getBalanceAtIndex(aiAnalysis.balanced?.projection, i),
+        'Priority': getBalanceAtIndex(aiAnalysis.priorityFirst?.projection, i),
+        'Hybrid': getBalanceAtIndex(aiAnalysis.hybridEmotional?.projection, i),
+        'CashflowRelief': getBalanceAtIndex(aiAnalysis.cashflowRelief?.projection, i),
+        'Survival': getBalanceAtIndex(aiAnalysis.survival?.projection, i),
+        'Relationship': getBalanceAtIndex(aiAnalysis.relationshipProtection?.projection, i),
+        'Adaptive': getBalanceAtIndex(aiAnalysis.aiAdaptive?.projection, i),
       });
     }
     return merged;
   };
+
 
   // Render Onboarding Wizard
   if (!isOnboarded) {
@@ -1861,7 +2119,21 @@ Be generous in interpretation. "joining bonus", "sign-on bonus", "relocation all
                     setLoansWithPayments([added]);
                   }
                   setOnboardStep(4);
-                  setNewLoan({ name: '', principal: '', rate: '', tenure: '', emi: '', lender: '', type: 'Home', prepayPriority: 'MEDIUM' });
+                  setNewLoan({
+                    name: '', principal: '', rate: '', tenure: '', emi: '', lender: '', type: 'Home', prepayPriority: 'MEDIUM' as 'HIGH' | 'MEDIUM' | 'LOW' | 'EXCLUDE',
+                    outstandingAmount: '',
+                    debtType: 'personal_loan' as 'credit_card' | 'personal_loan' | 'friend' | 'family' | 'salary_advance' | 'bnpl',
+                    priority: 'medium' as 'critical' | 'high' | 'medium' | 'low',
+                    flexibilityScore: 50,
+                    emotionalStressScore: 50,
+                    penaltyRiskScore: 50,
+                    relationshipRisk: 50,
+                    allowSkipPayment: false,
+                    minimumRequired: '',
+                    dueDate: '',
+                    settlementEligible: false
+                  });
+
                 }}>Next Step <ChevronRight size={16} /></button>
               </div>
             </div>
@@ -2658,6 +2930,79 @@ Be generous in interpretation. "joining bonus", "sign-on bonus", "relocation all
                       <option value="EXCLUDE">❌ Exclude (No Extra Prepayments)</option>
                     </select>
                   </div>
+
+                  <div style={{ display: 'flex', gap: '1rem' }}>
+                    <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
+                      <label style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Debt Category</label>
+                      <select
+                        value={newLoan.debtType || 'personal_loan'}
+                        onChange={(e) => setNewLoan({ ...newLoan, debtType: e.target.value as any })}
+                        style={{ padding: '0.45rem', borderRadius: '8px', background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.1)', color: 'var(--text-main)' }}
+                      >
+                        <option value="personal_loan">💳 Personal Loan</option>
+                        <option value="credit_card">🛍️ Credit Card</option>
+                        <option value="friend">🤝 Friend Loan</option>
+                        <option value="family">🏡 Family Loan</option>
+                        <option value="salary_advance">💸 Salary Advance</option>
+                        <option value="bnpl">📱 BNPL (Slice/Paylater)</option>
+                      </select>
+                    </div>
+
+                    <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
+                      <label style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Payoff Priority</label>
+                      <select
+                        value={newLoan.priority || 'medium'}
+                        onChange={(e) => setNewLoan({ ...newLoan, priority: e.target.value as any })}
+                        style={{ padding: '0.45rem', borderRadius: '8px', background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.1)', color: 'var(--text-main)' }}
+                      >
+                        <option value="critical">🚨 Critical (Pay immediately)</option>
+                        <option value="high">🔥 High</option>
+                        <option value="medium">⚡ Medium</option>
+                        <option value="low">🐢 Low (Flexible)</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                      <span>Anxiety & Emotional Stress</span>
+                      <span style={{ color: 'var(--accent)', fontWeight: 600 }}>{newLoan.emotionalStressScore || 50}/100</span>
+                    </div>
+                    <input
+                      type="range"
+                      min="0"
+                      max="100"
+                      value={newLoan.emotionalStressScore || 50}
+                      onChange={(e) => setNewLoan({ ...newLoan, emotionalStressScore: parseInt(e.target.value) })}
+                      style={{ accentColor: 'var(--accent)' }}
+                    />
+                  </div>
+
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                      <span>Lender Flexibility</span>
+                      <span style={{ color: 'var(--secondary)', fontWeight: 600 }}>{newLoan.flexibilityScore || 50}/100</span>
+                    </div>
+                    <input
+                      type="range"
+                      min="0"
+                      max="100"
+                      value={newLoan.flexibilityScore || 50}
+                      onChange={(e) => setNewLoan({ ...newLoan, flexibilityScore: parseInt(e.target.value) })}
+                      style={{ accentColor: 'var(--secondary)' }}
+                    />
+                  </div>
+
+                  <div style={{ display: 'flex', gap: '1rem', alignItems: 'center' }}>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.78rem', color: 'var(--text-muted)', cursor: 'pointer' }}>
+                      <input
+                        type="checkbox"
+                        checked={newLoan.allowSkipPayment || false}
+                        onChange={(e) => setNewLoan({ ...newLoan, allowSkipPayment: e.target.checked })}
+                      />
+                      Allow Skip Payment (under stress)
+                    </label>
+                  </div>
                   
                   <button type="submit" className="btn btn-primary" style={{ width: '100%' }}>
                     Register Loan Schedule
@@ -2899,7 +3244,7 @@ Be generous in interpretation. "joining bonus", "sign-on bonus", "relocation all
                                 <select
                                   value={editLoanForm.prepayPriority || 'MEDIUM'}
                                   onChange={(e) => setEditLoanForm({ ...editLoanForm, prepayPriority: e.target.value as 'HIGH' | 'MEDIUM' | 'LOW' | 'EXCLUDE' })}
-                                  style={{ width: '100%', padding: '0.45rem', borderRadius: '8px' }}
+                                  style={{ width: '100%', padding: '0.45rem', borderRadius: '8px', background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.1)', color: 'var(--text-main)' }}
                                 >
                                   <option value="HIGH">🔥 High Priority (Prepay First)</option>
                                   <option value="MEDIUM">⚡ Medium Priority (Standard)</option>
@@ -2907,6 +3252,79 @@ Be generous in interpretation. "joining bonus", "sign-on bonus", "relocation all
                                   <option value="EXCLUDE">❌ Exclude (No Extra Prepayments)</option>
                                 </select>
                               </div>
+                            </div>
+
+                            <div style={{ display: 'flex', gap: '0.75rem' }}>
+                              <div style={{ width: '50%', display: 'flex', flexDirection: 'column', gap: '0.2rem' }}>
+                                <label style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Debt Category</label>
+                                <select
+                                  value={editLoanForm.debtType || 'personal_loan'}
+                                  onChange={(e) => setEditLoanForm({ ...editLoanForm, debtType: e.target.value as any })}
+                                  style={{ width: '100%', padding: '0.45rem', borderRadius: '8px', background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.1)', color: 'var(--text-main)' }}
+                                >
+                                  <option value="personal_loan">💳 Personal Loan</option>
+                                  <option value="credit_card">🛍️ Credit Card</option>
+                                  <option value="friend">🤝 Friend Loan</option>
+                                  <option value="family">🏡 Family Loan</option>
+                                  <option value="salary_advance">💸 Salary Advance</option>
+                                  <option value="bnpl">📱 BNPL (Slice/Paylater)</option>
+                                </select>
+                              </div>
+
+                              <div style={{ width: '50%', display: 'flex', flexDirection: 'column', gap: '0.2rem' }}>
+                                <label style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Payoff Priority</label>
+                                <select
+                                  value={editLoanForm.priority || 'medium'}
+                                  onChange={(e) => setEditLoanForm({ ...editLoanForm, priority: e.target.value as any })}
+                                  style={{ width: '100%', padding: '0.45rem', borderRadius: '8px', background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.1)', color: 'var(--text-main)' }}
+                                >
+                                  <option value="critical">🚨 Critical (Pay first)</option>
+                                  <option value="high">🔥 High</option>
+                                  <option value="medium">⚡ Medium</option>
+                                  <option value="low">🐢 Low (Flexible)</option>
+                                </select>
+                              </div>
+                            </div>
+
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem', width: '100%' }}>
+                              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                                <span>Anxiety & Emotional Stress</span>
+                                <span style={{ color: 'var(--accent)', fontWeight: 600 }}>{editLoanForm.emotionalStressScore || 50}/100</span>
+                              </div>
+                              <input
+                                type="range"
+                                min="0"
+                                max="100"
+                                value={editLoanForm.emotionalStressScore || 50}
+                                onChange={(e) => setEditLoanForm({ ...editLoanForm, emotionalStressScore: parseInt(e.target.value) })}
+                                style={{ accentColor: 'var(--accent)', width: '100%' }}
+                              />
+                            </div>
+
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem', width: '100%' }}>
+                              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                                <span>Lender Flexibility</span>
+                                <span style={{ color: 'var(--secondary)', fontWeight: 600 }}>{editLoanForm.flexibilityScore || 50}/100</span>
+                              </div>
+                              <input
+                                type="range"
+                                min="0"
+                                max="100"
+                                value={editLoanForm.flexibilityScore || 50}
+                                onChange={(e) => setEditLoanForm({ ...editLoanForm, flexibilityScore: parseInt(e.target.value) })}
+                                style={{ accentColor: 'var(--secondary)', width: '100%' }}
+                              />
+                            </div>
+
+                            <div style={{ display: 'flex', gap: '1rem', alignItems: 'center', width: '100%' }}>
+                              <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.78rem', color: 'var(--text-muted)', cursor: 'pointer' }}>
+                                <input
+                                  type="checkbox"
+                                  checked={editLoanForm.allowSkipPayment || false}
+                                  onChange={(e) => setEditLoanForm({ ...editLoanForm, allowSkipPayment: e.target.checked })}
+                                />
+                                Allow Skip Payment (under stress)
+                              </label>
                             </div>
 
                             <div style={{ display: 'flex', gap: '0.75rem', marginTop: '0.5rem' }}>
@@ -2996,8 +3414,21 @@ Be generous in interpretation. "joining bonus", "sign-on bonus", "relocation all
                                         emi: String(lw.loan.emi),
                                         lender: lw.loan.lender,
                                         type: lw.loan.type,
-                                        prepayPriority: lw.loan.prepayPriority || 'MEDIUM'
+                                        prepayPriority: lw.loan.prepayPriority || 'MEDIUM',
+                                        
+                                        outstandingAmount: String(lw.loan.outstandingAmount || lw.loan.principal),
+                                        debtType: lw.loan.debtType || 'personal_loan',
+                                        priority: lw.loan.priority || 'medium',
+                                        flexibilityScore: lw.loan.flexibilityScore || 50,
+                                        emotionalStressScore: lw.loan.emotionalStressScore || 50,
+                                        penaltyRiskScore: lw.loan.penaltyRiskScore || 50,
+                                        relationshipRisk: lw.loan.relationshipRisk || 50,
+                                        allowSkipPayment: lw.loan.allowSkipPayment || false,
+                                        minimumRequired: String(lw.loan.minimumRequired || 0),
+                                        dueDate: lw.loan.dueDate || '',
+                                        settlementEligible: lw.loan.settlementEligible || false
                                       });
+
                                     }}
                                   >
                                     Edit Details
@@ -3303,10 +3734,101 @@ Be generous in interpretation. "joining bonus", "sign-on bonus", "relocation all
                     </div>
                   </div>
                 )}
-              </div>
             </div>
+          </div>
+
+
+            {aiAnalysis && (
+              <div className="dashboard-grid" style={{ marginBottom: '2rem', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))' }}>
+                {/* Card 1: Safe To Spend */}
+                <div className="premium-card glow-card" style={{ background: 'linear-gradient(135deg, rgba(16, 185, 129, 0.12) 0%, rgba(5, 150, 105, 0.05) 100%)', borderColor: 'var(--success)' }}>
+                  <span style={{ color: 'var(--text-muted)', fontSize: '0.8rem', fontWeight: 600, textTransform: 'uppercase' }}>💰 Safe-To-Spend Buffer</span>
+                  <h2 style={{ fontSize: '2.2rem', margin: '0.5rem 0', fontFamily: 'var(--font-display)', fontWeight: 800, color: '#34d399' }}>
+                    {userProfile.currency}{Math.max(0, totalIncome - totalExpenses - totalEMI - userProfile.savingsGoal).toLocaleString()}
+                  </h2>
+                  <p style={{ margin: 0, fontSize: '0.78rem', color: 'var(--text-muted)', lineHeight: '1.4' }}>
+                    Surplus left for guilt-free spend after meeting all EMIs ({userProfile.currency}{totalEMI.toLocaleString()}), essentials ({userProfile.currency}{totalExpenses.toLocaleString()}), and your {userProfile.currency}{userProfile.savingsGoal.toLocaleString()} savings goal.
+                  </p>
+                </div>
+
+                {/* Card 2: Financial Stress Score Gauge */}
+                <div className="premium-card" style={{ background: 'rgba(255,255,255,0.01)', borderColor: (aiAnalysis.financialStressScore || 50) > 75 ? 'var(--danger)' : (aiAnalysis.financialStressScore || 50) > 45 ? 'var(--warning)' : 'var(--primary)' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <span style={{ color: 'var(--text-muted)', fontSize: '0.8rem', fontWeight: 600, textTransform: 'uppercase' }}>🧠 Financial Stress Score</span>
+                    <span style={{ 
+                      background: (aiAnalysis.financialStressScore || 50) > 75 ? 'rgba(239, 68, 68, 0.15)' : (aiAnalysis.financialStressScore || 50) > 45 ? 'rgba(245, 158, 11, 0.15)' : 'rgba(168, 85, 247, 0.15)',
+                      color: (aiAnalysis.financialStressScore || 50) > 75 ? '#f87171' : (aiAnalysis.financialStressScore || 50) > 45 ? '#fbbf24' : '#c084fc',
+                      padding: '0.2rem 0.5rem', borderRadius: '6px', fontSize: '0.75rem', fontWeight: 700 
+                    }}>
+                      {(aiAnalysis.financialStressScore || 50) > 75 ? 'Critical' : (aiAnalysis.financialStressScore || 50) > 45 ? 'Moderate' : 'Healthy'}
+                    </span>
+                  </div>
+                  <h2 style={{ fontSize: '2.2rem', margin: '0.5rem 0', fontFamily: 'var(--font-display)', fontWeight: 800 }}>
+                    {aiAnalysis.financialStressScore || 50}<span style={{ fontSize: '1rem', color: 'var(--text-muted)' }}>/100</span>
+                  </h2>
+                  <div style={{ width: '100%', height: '6px', background: 'rgba(255,255,255,0.05)', borderRadius: '3px', overflow: 'hidden', marginBottom: '0.5rem' }}>
+                    <div style={{ 
+                      height: '100%', 
+                      width: `${aiAnalysis.financialStressScore || 50}%`, 
+                      background: (aiAnalysis.financialStressScore || 50) > 75 ? 'var(--danger)' : (aiAnalysis.financialStressScore || 50) > 45 ? 'var(--warning)' : 'linear-gradient(90deg, var(--primary), var(--secondary))',
+                      borderRadius: '3px' 
+                    }}></div>
+                  </div>
+                  <p style={{ margin: 0, fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                    Calculated based on debt-to-income ratio, flexibility metrics, and savings resilience cushion.
+                  </p>
+                </div>
+
+                {/* Card 3: Collection Risk & Warnings */}
+                <div className="premium-card glow-card" style={{ 
+                  background: aiAnalysis.harassmentRiskLevel?.includes('AGGRESSIVE') ? 'linear-gradient(135deg, rgba(239, 68, 68, 0.12) 0%, rgba(220, 38, 38, 0.05) 100%)' : 'rgba(255,255,255,0.01)',
+                  borderColor: aiAnalysis.harassmentRiskLevel?.includes('AGGRESSIVE') ? 'var(--danger)' : 'var(--border-color)' 
+                }}>
+                  <span style={{ color: 'var(--text-muted)', fontSize: '0.8rem', fontWeight: 600, textTransform: 'uppercase' }}>🛡️ Collector & Legal Risk</span>
+                  <h3 style={{ margin: '0.5rem 0 0.25rem 0', fontSize: '1.15rem', color: aiAnalysis.harassmentRiskLevel?.includes('AGGRESSIVE') ? '#f87171' : '#c084fc', display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+                    <AlertTriangle size={16} /> {aiAnalysis.harassmentRiskLevel || 'LOW RISK'}
+                  </h3>
+                  <p style={{ margin: 0, fontSize: '0.75rem', color: 'var(--text-muted)', lineHeight: '1.4' }}>
+                    {aiAnalysis.harassmentRiskLevel?.includes('AGGRESSIVE') 
+                      ? '⚠️ Critical Warning: Creditors are highly active. Prioritize critical EMIs first or shift into Survival Mode to preserve primary legal buffers.' 
+                      : 'All lenders are currently showing highly flexible/low-hostility profiles. Repayment terms remain cooperative.'}
+                  </p>
+                  
+                  {/* Danger Cash Deficit period warning */}
+                  {totalIncome < totalEMI + totalExpenses && (
+                    <div style={{ marginTop: '0.5rem', background: 'rgba(239,68,68,0.1)', color: '#f87171', padding: '0.35rem 0.6rem', borderRadius: '6px', fontSize: '0.72rem', fontWeight: 600 }}>
+                      ⚠️ Potential cashflow deficit next month (EMIs + essentials exceed income).
+                    </div>
+                  )}
+                </div>
+
+                {/* Card 4: Skip & AI Coaching Deferrals */}
+                <div className="premium-card">
+                  <span style={{ color: 'var(--text-muted)', fontSize: '0.8rem', fontWeight: 600, textTransform: 'uppercase' }}>💡 AI Smart Skip Recommendations</span>
+                  <div style={{ marginTop: '0.5rem', display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                    {aiAnalysis.skipSuggestions && aiAnalysis.skipSuggestions.map((suggestion, idx) => (
+                      <div key={idx} style={{ 
+                        fontSize: '0.78rem', 
+                        padding: '0.5rem 0.75rem', 
+                        background: 'rgba(255,255,255,0.02)', 
+                        border: '1px solid rgba(255,255,255,0.04)', 
+                        borderRadius: '8px',
+                        lineHeight: '1.3',
+                        color: 'var(--text-main)'
+                      }}>
+                        {suggestion}
+                      </div>
+                    ))}
+                    <div style={{ fontSize: '0.7rem', color: 'var(--text-dimmed)', fontStyle: 'italic', marginTop: '0.2rem' }}>
+                      Success Probability Score: <strong>{aiAnalysis.confidenceScore || 85}%</strong>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
 
             <div className="dashboard-grid">
+
               {/* Sliders card */}
               <div className="premium-card">
                 <h3>What-If Payoff Planner Simulator</h3>
@@ -3523,6 +4045,75 @@ Be generous in interpretation. "joining bonus", "sign-on bonus", "relocation all
                       <div dangerouslySetInnerHTML={{ __html: aiAnalysis.advice.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>').replace(/\n/g, '<br/>') }} />
                     </div>
 
+                    {/* Strategy Comparison Matrix Grid */}
+                    <div className="premium-card" style={{ border: '1px solid rgba(255,255,255,0.06)', borderRadius: '16px', background: 'rgba(255,255,255,0.01)', boxShadow: '0 4px 30px rgba(0,0,0,0.15)', marginTop: '2rem' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '1rem', color: 'var(--primary)', fontWeight: 700 }}>
+                        <Sparkles size={16} stroke="var(--primary)" /> 📊 Multi-Dimensional Payoff Matrix Grid
+                      </div>
+                      <h3 style={{ margin: '0 0 0.5rem 0', fontSize: '1.25rem' }}>Comparing Payoff Strategies Qualitatively</h3>
+                      <p style={{ margin: '0 0 1.5rem 0', fontSize: '0.85rem', color: 'var(--text-muted)' }}>
+                        How different payment allocation schedules compare across emotional stress and mathematical efficiency.
+                      </p>
+
+                      <div style={{ overflowX: 'auto' }}>
+                        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.82rem', textAlign: 'left' }}>
+                          <thead>
+                            <tr style={{ borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
+                              <th style={{ padding: '1rem 0.75rem', color: 'var(--text-muted)', fontWeight: 600 }}>Strategy Dimension</th>
+                              <th style={{ padding: '1rem 0.75rem', color: 'var(--primary)', fontWeight: 700 }}>⚡ Avalanche</th>
+                              <th style={{ padding: '1rem 0.75rem', color: 'var(--secondary)', fontWeight: 700 }}>❄️ Snowball</th>
+                              <th style={{ padding: '1rem 0.75rem', color: 'var(--accent)', fontWeight: 700 }}>🚨 Priority-First</th>
+                              <th style={{ padding: '1rem 0.75rem', color: '#f87171', fontWeight: 700 }}>🛡️ Survival Mode</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            <tr style={{ borderBottom: '1px solid rgba(255,255,255,0.03)', background: 'rgba(255,255,255,0.01)' }}>
+                              <td style={{ padding: '0.85rem 0.75rem', fontWeight: 600 }}>Stress Reduction</td>
+                              <td style={{ padding: '0.85rem 0.75rem', color: '#a8a29e' }}>Medium</td>
+                              <td style={{ padding: '0.85rem 0.75rem', color: '#60a5fa' }}>High</td>
+                              <td style={{ padding: '0.85rem 0.75rem', color: '#34d399', fontWeight: 700 }}>🟢 Highest</td>
+                              <td style={{ padding: '0.85rem 0.75rem', color: '#f87171' }}>Low</td>
+                            </tr>
+                            <tr style={{ borderBottom: '1px solid rgba(255,255,255,0.03)' }}>
+                              <td style={{ padding: '0.85rem 0.75rem', fontWeight: 600 }}>Interest Saved</td>
+                              <td style={{ padding: '0.85rem 0.75rem', color: '#34d399', fontWeight: 700 }}>🟢 Highest</td>
+                              <td style={{ padding: '0.85rem 0.75rem', color: '#f87171' }}>Low</td>
+                              <td style={{ padding: '0.85rem 0.75rem', color: '#a8a29e' }}>Medium</td>
+                              <td style={{ padding: '0.85rem 0.75rem', color: '#f87171' }}>Lowest</td>
+                            </tr>
+                            <tr style={{ borderBottom: '1px solid rgba(255,255,255,0.03)', background: 'rgba(255,255,255,0.01)' }}>
+                              <td style={{ padding: '0.85rem 0.75rem', fontWeight: 600 }}>Collector/Harassment Risk</td>
+                              <td style={{ padding: '0.85rem 0.75rem', color: '#60a5fa' }}>Low</td>
+                              <td style={{ padding: '0.85rem 0.75rem', color: '#a8a29e' }}>Medium</td>
+                              <td style={{ padding: '0.85rem 0.75rem', color: '#34d399', fontWeight: 700 }}>🟢 Lowest</td>
+                              <td style={{ padding: '0.85rem 0.75rem', color: '#a8a29e' }}>Medium</td>
+                            </tr>
+                            <tr style={{ borderBottom: '1px solid rgba(255,255,255,0.03)' }}>
+                              <td style={{ padding: '0.85rem 0.75rem', fontWeight: 600 }}>Motivation & Momentum</td>
+                              <td style={{ padding: '0.85rem 0.75rem', color: '#a8a29e' }}>Medium</td>
+                              <td style={{ padding: '0.85rem 0.75rem', color: '#34d399', fontWeight: 700 }}>🟢 Highest</td>
+                              <td style={{ padding: '0.85rem 0.75rem', color: '#60a5fa' }}>High</td>
+                              <td style={{ padding: '0.85rem 0.75rem', color: '#f87171' }}>Low</td>
+                            </tr>
+                            <tr style={{ borderBottom: '1px solid rgba(255,255,255,0.03)', background: 'rgba(255,255,255,0.01)' }}>
+                              <td style={{ padding: '0.85rem 0.75rem', fontWeight: 600 }}>Monthly Cashflow Relief</td>
+                              <td style={{ padding: '0.85rem 0.75rem', color: '#a8a29e' }}>Medium</td>
+                              <td style={{ padding: '0.85rem 0.75rem', color: '#a8a29e' }}>Medium</td>
+                              <td style={{ padding: '0.85rem 0.75rem', color: '#60a5fa' }}>High</td>
+                              <td style={{ padding: '0.85rem 0.75rem', color: '#34d399', fontWeight: 700 }}>🟢 Highest</td>
+                            </tr>
+                            <tr style={{ borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
+                              <td style={{ padding: '0.85rem 0.75rem', fontWeight: 600 }}>Simulated Debt-Free Date</td>
+                              <td style={{ padding: '0.85rem 0.75rem', color: 'var(--primary)', fontWeight: 700 }}>{aiAnalysis.avalanche.debtFreeDate}</td>
+                              <td style={{ padding: '0.85rem 0.75rem', color: 'var(--secondary)', fontWeight: 700 }}>{aiAnalysis.snowball.debtFreeDate}</td>
+                              <td style={{ padding: '0.85rem 0.75rem', color: 'var(--accent)', fontWeight: 700 }}>{aiAnalysis.priorityFirst?.debtFreeDate || 'N/A'}</td>
+                              <td style={{ padding: '0.85rem 0.75rem', color: '#f87171', fontWeight: 700 }}>{aiAnalysis.survival?.debtFreeDate || 'N/A'}</td>
+                            </tr>
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+
                     {/* Dynamic Strategy Repayment Waterfall Breakdown */}
                     <div className="premium-card" style={{ border: '1px solid rgba(255,255,255,0.06)', borderRadius: '16px', background: 'rgba(255,255,255,0.01)', boxShadow: '0 4px 30px rgba(0,0,0,0.15)', marginTop: '2rem' }}>
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem', flexWrap: 'wrap', gap: '0.75rem' }}>
@@ -3535,15 +4126,15 @@ Be generous in interpretation. "joining bonus", "sign-on bonus", "relocation all
                             Active Simulation details of payments made to each individual account.
                           </p>
                         </div>
-                        <div style={{ display: 'flex', gap: '0.4rem', background: 'rgba(255,255,255,0.02)', padding: '0.25rem', borderRadius: '10px', border: '1px solid rgba(255,255,255,0.05)' }}>
-                          {(['Avalanche', 'Snowball', 'Balanced', 'Baseline'] as const).map(strat => (
+                        <div style={{ display: 'flex', gap: '0.4rem', background: 'rgba(255,255,255,0.02)', padding: '0.25rem', borderRadius: '10px', border: '1px solid rgba(255,255,255,0.05)', flexWrap: 'wrap', maxWidth: '420px', justifyContent: 'flex-end' }}>
+                          {(['Avalanche', 'Snowball', 'Balanced', 'Priority', 'Hybrid', 'CashflowRelief', 'Survival', 'Relationship', 'Adaptive', 'Baseline'] as const).map(strat => (
                             <button
                               key={strat}
                               className={`btn ${selectedStrategy === strat ? 'btn-primary' : 'btn-secondary'}`}
                               style={{ 
-                                padding: '0.35rem 0.75rem', 
-                                fontSize: '0.78rem', 
-                                borderRadius: '8px',
+                                padding: '0.3rem 0.6rem', 
+                                fontSize: '0.74rem', 
+                                borderRadius: '6px',
                                 background: selectedStrategy === strat ? '' : 'transparent',
                                 border: selectedStrategy === strat ? '' : 'none',
                                 color: selectedStrategy === strat ? '' : 'var(--text-muted)'
@@ -3615,6 +4206,48 @@ Be generous in interpretation. "joining bonus", "sign-on bonus", "relocation all
                                           </div>
                                         </div>
                                       </div>
+
+                                      {/* Milestone and stress narrative */}
+                                      {(() => {
+                                        const clearedLoans = point.details?.filter(snap => snap.remaining === 0 && (snap.minPaid + snap.extraPaid) > 0) || [];
+                                        return (
+                                          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                                            <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+                                              <span style={{ fontSize: '0.75rem', background: 'rgba(255,255,255,0.03)', padding: '0.15rem 0.45rem', borderRadius: '6px', color: 'var(--text-muted)' }}>
+                                                🛡️ {point.details?.filter(snap => snap.remaining > 0).length} active debt accounts left
+                                              </span>
+                                              {clearedLoans.length > 0 ? (
+                                                <span style={{ fontSize: '0.75rem', background: 'rgba(16,185,129,0.12)', padding: '0.15rem 0.45rem', borderRadius: '6px', color: '#34d399', fontWeight: 600 }}>
+                                                  🧘 Stress Relief: Stress level dropped!
+                                                </span>
+                                              ) : (
+                                                <span style={{ fontSize: '0.75rem', background: 'rgba(168,85,247,0.05)', padding: '0.15rem 0.45rem', borderRadius: '6px', color: 'var(--text-dimmed)' }}>
+                                                  📉 Repayments progress stable
+                                                </span>
+                                              )}
+                                            </div>
+                                            {clearedLoans.length > 0 && (
+                                              <div style={{
+                                                background: 'linear-gradient(90deg, rgba(16,185,129,0.1) 0%, rgba(99,102,241,0.02) 100%)',
+                                                border: '1px solid rgba(16,185,129,0.2)',
+                                                borderRadius: '10px',
+                                                padding: '0.6rem 0.85rem',
+                                                fontSize: '0.82rem',
+                                                color: '#34d399',
+                                                fontWeight: 600,
+                                                display: 'flex',
+                                                alignItems: 'center',
+                                                gap: '0.5rem'
+                                              }}>
+                                                <span>🎉</span>
+                                                <div>
+                                                  <strong>Milestone Reached!</strong> {clearedLoans.map(cl => cl.name).join(' & ')} fully ELIMINATED!
+                                                </div>
+                                              </div>
+                                            )}
+                                          </div>
+                                        );
+                                      })()}
 
                                       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: '0.75rem' }}>
                                         {point.details?.map(snap => {
