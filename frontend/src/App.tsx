@@ -102,6 +102,10 @@ interface Loan {
   minimumRequired?: number;
   dueDate?: string;
   settlementEligible?: boolean;
+  // Dynamic Strategy Engine Fields
+  earlyClosureCharges?: number;
+  remainingTenure?: number;
+  creditorType?: string;
 }
 
 interface LoanWithPayments {
@@ -174,6 +178,14 @@ interface AnalysisData {
   harassmentRiskLevel?: string;
   confidenceScore?: number;
   skipSuggestions?: string[];
+  // Dynamic Strategy Engine fields
+  availableCashFlow?: number;
+  availableForAcceleration?: number;
+  minimumSavingsRequirement?: number;
+  coachingInsights?: string[];
+  aggressiveStrategy?: StrategyResult;
+  balancedStrategy?: StrategyResult;
+  cashFlowProtectionStrategy?: StrategyResult;
   advice: string;
 }
 
@@ -381,6 +393,11 @@ export default function App() {
   const [simLumpSum, setSimLumpSum] = useState<number>(50000);
   const [simSalaryHike, setSimSalaryHike] = useState<number>(10);
   const [simCustomText, setSimCustomText] = useState<string>('');
+
+  // Dynamic Strategy Engine: User Planner Preferences
+  const [plannerGoal, setPlannerGoal] = useState<string>('DEBT_FREE_FAST');
+  const [plannerStyle, setPlannerStyle] = useState<string>('AGGRESSIVE');
+  const [plannerMinSavings, setPlannerMinSavings] = useState<number>(5000);
 
   // Fallback indicator
   const [isUsingFallback, setIsUsingFallback] = useState<boolean>(false);
@@ -636,7 +653,9 @@ Be generous in interpretation. "joining bonus", "sign-on bonus", "relocation all
               extraMonthlyPayment: parsedExtraMonthly,
               lumpSumPrepayment: parsedLumpSum,
               salaryHikePercent: parsedSalaryHike,
-              customText: simCustomText // still send for backend's own parsing/logging
+              customText: simCustomText, // still send for backend's own parsing/logging
+              userGoal: plannerGoal,
+              minimumSavingsRequirement: plannerMinSavings
             })
           });
           const data = await res.json();
@@ -3003,6 +3022,50 @@ ${stressScore > 70
                       Allow Skip Payment (under stress)
                     </label>
                   </div>
+
+                  {/* Dynamic Strategy Engine Fields */}
+                  <div style={{ borderTop: '1px solid rgba(255,255,255,0.05)', paddingTop: '1rem', display: 'flex', flexDirection: 'column', gap: '0.85rem' }}>
+                    <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)', fontWeight: 600 }}>📊 Strategy Engine Fields (optional)</div>
+                    <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap' }}>
+                      <div style={{ flex: '1 1 140px', display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
+                        <label style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>Creditor Type</label>
+                        <select
+                          value={(newLoan as any).creditorType || 'BANK'}
+                          onChange={(e) => setNewLoan({ ...newLoan, creditorType: e.target.value } as any)}
+                          style={{ padding: '0.4rem 0.75rem', borderRadius: '8px' }}
+                        >
+                          <option value="BANK">🏦 Bank</option>
+                          <option value="NBFC">🏢 NBFC</option>
+                          <option value="FRIEND">🤝 Friend</option>
+                          <option value="FAMILY">👨‍👩‍👧 Family</option>
+                          <option value="EMPLOYER">💼 Employer</option>
+                          <option value="OTHER">📦 Other</option>
+                        </select>
+                      </div>
+                      <div style={{ flex: '1 1 140px', display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
+                        <label style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>Early Closure Charges (₹)</label>
+                        <input
+                          type="number"
+                          placeholder="0"
+                          value={(newLoan as any).earlyClosureCharges || ''}
+                          onChange={(e) => setNewLoan({ ...newLoan, earlyClosureCharges: parseFloat(e.target.value) || 0 } as any)}
+                          min={0}
+                          style={{ padding: '0.4rem 0.75rem', borderRadius: '8px' }}
+                        />
+                      </div>
+                      <div style={{ flex: '1 1 120px', display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
+                        <label style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>Remaining Tenure (months)</label>
+                        <input
+                          type="number"
+                          placeholder="Auto"
+                          value={(newLoan as any).remainingTenure || ''}
+                          onChange={(e) => setNewLoan({ ...newLoan, remainingTenure: parseInt(e.target.value) || undefined } as any)}
+                          min={1}
+                          style={{ padding: '0.4rem 0.75rem', borderRadius: '8px' }}
+                        />
+                      </div>
+                    </div>
+                  </div>
                   
                   <button type="submit" className="btn btn-primary" style={{ width: '100%' }}>
                     Register Loan Schedule
@@ -3588,7 +3651,547 @@ ${stressScore > 70
         {/* 4. AI PAYOFF PLANNER & WHAT-IF SIMULATOR */}
         {activeTab === 'planner' && (
           <div>
+
+            {/* ═══════════════════════════════════════════════════════════════
+                DYNAMIC DEBT STRATEGY ENGINE — PERSONALIZED PLANNING SECTION
+                ═══════════════════════════════════════════════════════════════ */}
+
+            {/* Section Header */}
+            <div style={{
+              display: 'flex', alignItems: 'center', gap: '1rem', marginBottom: '1.5rem',
+              padding: '1.25rem 1.5rem',
+              background: 'linear-gradient(135deg, rgba(168,85,247,0.12) 0%, rgba(99,102,241,0.06) 100%)',
+              borderRadius: '16px',
+              border: '1px solid rgba(168,85,247,0.25)'
+            }}>
+              <div style={{ padding: '0.75rem', background: 'rgba(168,85,247,0.2)', borderRadius: '12px' }}>
+                <Brain size={22} style={{ color: 'var(--primary)' }} />
+              </div>
+              <div>
+                <h2 style={{ margin: 0, fontSize: '1.5rem', fontFamily: 'var(--font-display)', fontWeight: 800 }}>
+                  Dynamic Debt Strategy Engine
+                </h2>
+                <p style={{ margin: '0.2rem 0 0 0', fontSize: '0.88rem', color: 'var(--text-muted)' }}>
+                  Personalized repayment plan calculated from your real income, expenses, debts & priorities
+                </p>
+              </div>
+              <button
+                onClick={handleRefreshData}
+                disabled={isRefreshingData}
+                className="btn btn-secondary"
+                style={{ marginLeft: 'auto', padding: '0.4rem 1rem', fontSize: '0.85rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}
+              >
+                <RotateCcw size={14} style={{ animation: isRefreshingData ? 'spin 1s linear infinite' : 'none' }} />
+                {isRefreshingData ? 'Refreshing...' : 'Refresh'}
+              </button>
+            </div>
+
+            {/* ── PANEL 1: Financial Snapshot ── */}
+            <div className="premium-card" style={{ marginBottom: '2rem' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '1.25rem' }}>
+                <TrendingUp size={18} style={{ color: 'var(--primary)' }} />
+                <h3 style={{ margin: 0 }}>Live Financial Snapshot</h3>
+                <span style={{ fontSize: '0.72rem', color: 'var(--text-dimmed)', marginLeft: '0.5rem' }}>Auto-calculated from your actual data</span>
+              </div>
+
+              {/* Cash Flow Equation */}
+              <div style={{
+                display: 'grid',
+                gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))',
+                gap: '1rem',
+                marginBottom: '1.25rem'
+              }}>
+                {/* Income */}
+                <div style={{ textAlign: 'center', padding: '1rem', background: 'rgba(16,185,129,0.08)', borderRadius: '12px', border: '1px solid rgba(16,185,129,0.2)' }}>
+                  <div style={{ fontSize: '0.75rem', color: '#34d399', fontWeight: 700, textTransform: 'uppercase', marginBottom: '0.35rem' }}>💰 Total Income</div>
+                  <div style={{ fontSize: '1.6rem', fontWeight: 800, fontFamily: 'var(--font-display)', color: '#34d399' }}>
+                    {userProfile.currency}{totalIncome.toLocaleString()}
+                  </div>
+                  <div style={{ fontSize: '0.7rem', color: 'var(--text-dimmed)', marginTop: '0.25rem' }}>{incomes.length} source{incomes.length !== 1 ? 's' : ''}</div>
+                </div>
+
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '1.5rem', color: 'var(--text-muted)', fontWeight: 300 }}>−</div>
+
+                {/* Expenses */}
+                <div style={{ textAlign: 'center', padding: '1rem', background: 'rgba(245,158,11,0.08)', borderRadius: '12px', border: '1px solid rgba(245,158,11,0.2)' }}>
+                  <div style={{ fontSize: '0.75rem', color: '#fbbf24', fontWeight: 700, textTransform: 'uppercase', marginBottom: '0.35rem' }}>🧾 Monthly Expenses</div>
+                  <div style={{ fontSize: '1.6rem', fontWeight: 800, fontFamily: 'var(--font-display)', color: '#fbbf24' }}>
+                    {userProfile.currency}{Math.max(totalExpenses, 28000).toLocaleString()}
+                  </div>
+                  <div style={{ fontSize: '0.7rem', color: 'var(--text-dimmed)', marginTop: '0.25rem' }}>rent, food, utilities…</div>
+                </div>
+
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '1.5rem', color: 'var(--text-muted)', fontWeight: 300 }}>−</div>
+
+                {/* EMIs */}
+                <div style={{ textAlign: 'center', padding: '1rem', background: 'rgba(239,68,68,0.08)', borderRadius: '12px', border: '1px solid rgba(239,68,68,0.2)' }}>
+                  <div style={{ fontSize: '0.75rem', color: '#f87171', fontWeight: 700, textTransform: 'uppercase', marginBottom: '0.35rem' }}>📅 Mandatory EMIs</div>
+                  <div style={{ fontSize: '1.6rem', fontWeight: 800, fontFamily: 'var(--font-display)', color: '#f87171' }}>
+                    {userProfile.currency}{totalEMI.toLocaleString()}
+                  </div>
+                  <div style={{ fontSize: '0.7rem', color: 'var(--text-dimmed)', marginTop: '0.25rem' }}>{loansWithPayments.length} active loan{loansWithPayments.length !== 1 ? 's' : ''}</div>
+                </div>
+
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '1.5rem', color: 'var(--text-muted)', fontWeight: 300 }}>=</div>
+
+                {/* Available Cash Flow */}
+                {(() => {
+                  const cashFlow = Math.max(0, totalIncome - Math.max(totalExpenses, 28000) - totalEMI);
+                  const forAccel = Math.max(0, cashFlow - plannerMinSavings);
+                  return (
+                    <div style={{
+                      textAlign: 'center', padding: '1rem',
+                      background: cashFlow > 0 ? 'rgba(168,85,247,0.12)' : 'rgba(239,68,68,0.08)',
+                      borderRadius: '12px',
+                      border: cashFlow > 0 ? '2px solid rgba(168,85,247,0.4)' : '1px solid rgba(239,68,68,0.2)',
+                      boxShadow: cashFlow > 0 ? '0 0 20px rgba(168,85,247,0.15)' : 'none'
+                    }}>
+                      <div style={{ fontSize: '0.75rem', color: 'var(--primary)', fontWeight: 700, textTransform: 'uppercase', marginBottom: '0.35rem' }}>🚀 Available to Accelerate</div>
+                      <div style={{ fontSize: '1.6rem', fontWeight: 800, fontFamily: 'var(--font-display)', color: cashFlow > 0 ? 'var(--primary)' : 'var(--danger)' }}>
+                        {userProfile.currency}{forAccel.toLocaleString()}
+                      </div>
+                      <div style={{ fontSize: '0.7rem', color: 'var(--text-dimmed)', marginTop: '0.25rem' }}>
+                        after ₹{plannerMinSavings.toLocaleString()} savings reserve
+                      </div>
+                    </div>
+                  );
+                })()}
+              </div>
+
+              {/* Min Savings Target Input */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: '1.25rem', padding: '0.85rem 1rem', background: 'rgba(255,255,255,0.02)', borderRadius: '10px', border: '1px solid rgba(255,255,255,0.05)', flexWrap: 'wrap' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.88rem', color: 'var(--text-muted)' }}>
+                  <span>🛡️ Minimum Monthly Savings Reserve:</span>
+                </div>
+                <input
+                  id="plannerMinSavings"
+                  type="number"
+                  value={plannerMinSavings}
+                  onChange={e => setPlannerMinSavings(Math.max(0, parseInt(e.target.value) || 0))}
+                  style={{ width: '130px', padding: '0.4rem 0.75rem', borderRadius: '8px', fontSize: '0.9rem', textAlign: 'right' }}
+                  min={0}
+                  step={1000}
+                />
+                <span style={{ fontSize: '0.78rem', color: 'var(--text-dimmed)' }}>per month (emergency fund, SIP, etc.)</span>
+              </div>
+            </div>
+
+            {/* ── PANEL 2: User Preferences ── */}
+            <div className="premium-card" style={{ marginBottom: '2rem' }}>
+              <h3 style={{ marginBottom: '1.25rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                <span>🎯</span> What's Your Financial Goal?
+              </h3>
+
+              {/* Goal Cards */}
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: '0.85rem', marginBottom: '1.5rem' }}>
+                {[
+                  { id: 'DEBT_FREE_FAST', icon: '🚀', label: 'Debt Free Fast', desc: 'Eliminate all debt ASAP' },
+                  { id: 'MINIMIZE_STRESS', icon: '🧘', label: 'Minimize Stress', desc: 'Reduce financial pressure' },
+                  { id: 'MAINTAIN_EMERGENCY_FUND', icon: '🛡️', label: 'Keep Emergency Fund', desc: 'Safety buffer first' },
+                  { id: 'SAVE_WHILE_PAYING', icon: '📈', label: 'Save While Paying', desc: 'Dual track: savings + debt' },
+                ].map(goal => (
+                  <div
+                    key={goal.id}
+                    id={`goal-${goal.id}`}
+                    onClick={() => setPlannerGoal(goal.id)}
+                    style={{
+                      padding: '1rem',
+                      borderRadius: '12px',
+                      border: plannerGoal === goal.id ? '2px solid var(--primary)' : '1px solid rgba(255,255,255,0.06)',
+                      background: plannerGoal === goal.id ? 'rgba(168,85,247,0.12)' : 'rgba(255,255,255,0.02)',
+                      cursor: 'pointer',
+                      transition: 'all 0.25s ease',
+                      boxShadow: plannerGoal === goal.id ? '0 0 16px rgba(168,85,247,0.25)' : 'none',
+                      textAlign: 'center',
+                      userSelect: 'none'
+                    }}
+                  >
+                    <div style={{ fontSize: '1.6rem', marginBottom: '0.35rem' }}>{goal.icon}</div>
+                    <div style={{ fontWeight: 700, fontSize: '0.85rem', color: plannerGoal === goal.id ? 'var(--primary)' : 'var(--text-main)' }}>{goal.label}</div>
+                    <div style={{ fontSize: '0.72rem', color: 'var(--text-dimmed)', marginTop: '0.2rem', lineHeight: '1.3' }}>{goal.desc}</div>
+                  </div>
+                ))}
+              </div>
+
+              <h3 style={{ marginBottom: '1rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                <span>⚙️</span> Repayment Style
+              </h3>
+              <div style={{ display: 'flex', gap: '0.85rem', flexWrap: 'wrap' }}>
+                {[
+                  { id: 'AGGRESSIVE', icon: '⚡', label: 'Aggressive', desc: 'Max debt, min savings' },
+                  { id: 'BALANCED', icon: '⚖️', label: 'Balanced', desc: 'Mix: debt + savings' },
+                  { id: 'CONSERVATIVE', icon: '🐢', label: 'Conservative', desc: 'Protect cash, slow payoff' },
+                ].map(style => (
+                  <div
+                    key={style.id}
+                    id={`style-${style.id}`}
+                    onClick={() => setPlannerStyle(style.id)}
+                    style={{
+                      flex: '1 1 140px',
+                      padding: '0.85rem 1rem',
+                      borderRadius: '12px',
+                      border: plannerStyle === style.id ? '2px solid var(--secondary)' : '1px solid rgba(255,255,255,0.06)',
+                      background: plannerStyle === style.id ? 'rgba(99,102,241,0.1)' : 'rgba(255,255,255,0.02)',
+                      cursor: 'pointer',
+                      transition: 'all 0.25s ease',
+                      boxShadow: plannerStyle === style.id ? '0 0 16px rgba(99,102,241,0.2)' : 'none',
+                      textAlign: 'center',
+                      userSelect: 'none'
+                    }}
+                  >
+                    <div style={{ fontSize: '1.4rem', marginBottom: '0.25rem' }}>{style.icon}</div>
+                    <div style={{ fontWeight: 700, fontSize: '0.88rem', color: plannerStyle === style.id ? '#818cf8' : 'var(--text-main)' }}>{style.label}</div>
+                    <div style={{ fontSize: '0.72rem', color: 'var(--text-dimmed)', marginTop: '0.15rem' }}>{style.desc}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* ── PANEL 3: Three Strategy Cards ── */}
+            {aiAnalysis && (
+              <div style={{ marginBottom: '2rem' }}>
+                <h3 style={{ marginBottom: '1.25rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                  <Award size={18} style={{ color: 'var(--primary)' }} />
+                  Personalized Repayment Strategies
+                </h3>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '1.25rem' }}>
+
+                  {/* Strategy 1: Aggressive */}
+                  <div
+                    id="strategy-aggressive"
+                    onClick={() => setPlannerStyle('AGGRESSIVE')}
+                    style={{
+                      padding: '1.5rem',
+                      borderRadius: '16px',
+                      border: plannerStyle === 'AGGRESSIVE' ? '2px solid #f472b6' : '1px solid rgba(236,72,153,0.2)',
+                      background: 'linear-gradient(135deg, rgba(236,72,153,0.1) 0%, rgba(168,85,247,0.05) 100%)',
+                      cursor: 'pointer',
+                      transition: 'all 0.3s ease',
+                      boxShadow: plannerStyle === 'AGGRESSIVE' ? '0 0 24px rgba(236,72,153,0.25)' : 'none',
+                      position: 'relative', overflow: 'hidden'
+                    }}
+                  >
+                    {plannerStyle === 'AGGRESSIVE' && (
+                      <div style={{ position: 'absolute', top: '0.85rem', right: '0.85rem', background: '#f472b6', color: 'white', fontSize: '0.65rem', fontWeight: 700, padding: '0.15rem 0.5rem', borderRadius: '8px' }}>SELECTED</div>
+                    )}
+                    <div style={{ fontSize: '1.75rem', marginBottom: '0.35rem' }}>⚡</div>
+                    <h4 style={{ margin: '0 0 0.25rem 0', color: '#f472b6', fontFamily: 'var(--font-display)', fontSize: '1.1rem' }}>Aggressive Strategy</h4>
+                    <p style={{ margin: '0 0 1rem 0', fontSize: '0.78rem', color: 'var(--text-muted)', lineHeight: '1.4' }}>
+                      Maximum surplus → highest-interest debt first. Become debt-free as fast as possible.
+                    </p>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.85rem' }}>
+                        <span style={{ color: 'var(--text-muted)' }}>Debt-Free Date:</span>
+                        <strong style={{ color: '#f472b6' }}>{aiAnalysis.avalanche?.debtFreeDate || aiAnalysis.baseline.debtFreeDate}</strong>
+                      </div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.85rem' }}>
+                        <span style={{ color: 'var(--text-muted)' }}>Interest Saved:</span>
+                        <strong style={{ color: '#34d399' }}>₹{(aiAnalysis.avalanche?.interestSaved || 0).toLocaleString()}</strong>
+                      </div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.85rem' }}>
+                        <span style={{ color: 'var(--text-muted)' }}>Months Faster:</span>
+                        <strong style={{ color: '#34d399' }}>{aiAnalysis.avalanche?.monthsSaved || 0} months</strong>
+                      </div>
+                    </div>
+                    <div style={{ marginTop: '1rem', display: 'flex', flexWrap: 'wrap', gap: '0.4rem' }}>
+                      {['Min savings', 'Max payments', 'Fastest payoff'].map(c => (
+                        <span key={c} style={{ fontSize: '0.68rem', background: 'rgba(236,72,153,0.15)', color: '#f472b6', padding: '0.15rem 0.5rem', borderRadius: '8px' }}>{c}</span>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Strategy 2: Balanced */}
+                  <div
+                    id="strategy-balanced"
+                    onClick={() => setPlannerStyle('BALANCED')}
+                    style={{
+                      padding: '1.5rem',
+                      borderRadius: '16px',
+                      border: plannerStyle === 'BALANCED' ? '2px solid var(--primary)' : '1px solid rgba(168,85,247,0.2)',
+                      background: 'linear-gradient(135deg, rgba(168,85,247,0.1) 0%, rgba(99,102,241,0.05) 100%)',
+                      cursor: 'pointer',
+                      transition: 'all 0.3s ease',
+                      boxShadow: plannerStyle === 'BALANCED' ? '0 0 24px rgba(168,85,247,0.25)' : 'none',
+                      position: 'relative', overflow: 'hidden'
+                    }}
+                  >
+                    {plannerStyle === 'BALANCED' && (
+                      <div style={{ position: 'absolute', top: '0.85rem', right: '0.85rem', background: 'var(--primary)', color: 'white', fontSize: '0.65rem', fontWeight: 700, padding: '0.15rem 0.5rem', borderRadius: '8px' }}>SELECTED</div>
+                    )}
+                    <div style={{ fontSize: '1.75rem', marginBottom: '0.35rem' }}>⚖️</div>
+                    <h4 style={{ margin: '0 0 0.25rem 0', color: 'var(--primary)', fontFamily: 'var(--font-display)', fontSize: '1.1rem' }}>Balanced Strategy</h4>
+                    <p style={{ margin: '0 0 1rem 0', fontSize: '0.78rem', color: 'var(--text-muted)', lineHeight: '1.4' }}>
+                      Proportional split across all debts. Maintain financial stability while paying down debt.
+                    </p>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.85rem' }}>
+                        <span style={{ color: 'var(--text-muted)' }}>Debt-Free Date:</span>
+                        <strong style={{ color: 'var(--primary)' }}>{aiAnalysis.balanced?.debtFreeDate || aiAnalysis.baseline.debtFreeDate}</strong>
+                      </div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.85rem' }}>
+                        <span style={{ color: 'var(--text-muted)' }}>Interest Saved:</span>
+                        <strong style={{ color: '#34d399' }}>₹{(aiAnalysis.balanced?.interestSaved || 0).toLocaleString()}</strong>
+                      </div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.85rem' }}>
+                        <span style={{ color: 'var(--text-muted)' }}>Months Faster:</span>
+                        <strong style={{ color: '#34d399' }}>{aiAnalysis.balanced?.monthsSaved || 0} months</strong>
+                      </div>
+                    </div>
+                    <div style={{ marginTop: '1rem', display: 'flex', flexWrap: 'wrap', gap: '0.4rem' }}>
+                      {['Debt + savings', 'Moderate lifestyle', 'Stable progress'].map(c => (
+                        <span key={c} style={{ fontSize: '0.68rem', background: 'rgba(168,85,247,0.15)', color: 'var(--primary)', padding: '0.15rem 0.5rem', borderRadius: '8px' }}>{c}</span>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Strategy 3: Cash Flow Protection */}
+                  <div
+                    id="strategy-conservative"
+                    onClick={() => setPlannerStyle('CONSERVATIVE')}
+                    style={{
+                      padding: '1.5rem',
+                      borderRadius: '16px',
+                      border: plannerStyle === 'CONSERVATIVE' ? '2px solid #34d399' : '1px solid rgba(16,185,129,0.2)',
+                      background: 'linear-gradient(135deg, rgba(16,185,129,0.1) 0%, rgba(5,150,105,0.05) 100%)',
+                      cursor: 'pointer',
+                      transition: 'all 0.3s ease',
+                      boxShadow: plannerStyle === 'CONSERVATIVE' ? '0 0 24px rgba(16,185,129,0.25)' : 'none',
+                      position: 'relative', overflow: 'hidden'
+                    }}
+                  >
+                    {plannerStyle === 'CONSERVATIVE' && (
+                      <div style={{ position: 'absolute', top: '0.85rem', right: '0.85rem', background: '#34d399', color: '#000', fontSize: '0.65rem', fontWeight: 700, padding: '0.15rem 0.5rem', borderRadius: '8px' }}>SELECTED</div>
+                    )}
+                    <div style={{ fontSize: '1.75rem', marginBottom: '0.35rem' }}>🛡️</div>
+                    <h4 style={{ margin: '0 0 0.25rem 0', color: '#34d399', fontFamily: 'var(--font-display)', fontSize: '1.1rem' }}>Cash Flow Protection</h4>
+                    <p style={{ margin: '0 0 1rem 0', fontSize: '0.78rem', color: 'var(--text-muted)', lineHeight: '1.4' }}>
+                      Close highest-EMI loans first to free monthly cash. Maximum liquidity, slower total payoff.
+                    </p>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.85rem' }}>
+                        <span style={{ color: 'var(--text-muted)' }}>Debt-Free Date:</span>
+                        <strong style={{ color: '#34d399' }}>{aiAnalysis.cashflowRelief?.debtFreeDate || aiAnalysis.baseline.debtFreeDate}</strong>
+                      </div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.85rem' }}>
+                        <span style={{ color: 'var(--text-muted)' }}>EMI Freed /month:</span>
+                        <strong style={{ color: '#34d399' }}>₹{Math.round(totalEMI * 0.4).toLocaleString()}+</strong>
+                      </div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.85rem' }}>
+                        <span style={{ color: 'var(--text-muted)' }}>Months Faster:</span>
+                        <strong style={{ color: '#34d399' }}>{aiAnalysis.cashflowRelief?.monthsSaved || 0} months</strong>
+                      </div>
+                    </div>
+                    <div style={{ marginTop: '1rem', display: 'flex', flexWrap: 'wrap', gap: '0.4rem' }}>
+                      {['Mandatory payments', 'Cash reserves', 'Slow payoff'].map(c => (
+                        <span key={c} style={{ fontSize: '0.68rem', background: 'rgba(16,185,129,0.15)', color: '#34d399', padding: '0.15rem 0.5rem', borderRadius: '8px' }}>{c}</span>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* ── PANEL 4: Monthly Allocation Engine ── */}
+            {aiAnalysis && (() => {
+              const cashFlow = Math.max(0, totalIncome - Math.max(totalExpenses, 28000) - totalEMI);
+              const forDebt = Math.max(0, cashFlow - plannerMinSavings);
+              const debtSplit = plannerStyle === 'AGGRESSIVE' ? forDebt : plannerStyle === 'BALANCED' ? forDebt * 0.7 : forDebt * 0.4;
+              const savingsSplit = plannerStyle === 'AGGRESSIVE' ? plannerMinSavings : plannerStyle === 'BALANCED' ? (forDebt * 0.3 + plannerMinSavings) : (forDebt * 0.6 + plannerMinSavings);
+              return (
+                <div className="premium-card" style={{ marginBottom: '2rem' }}>
+                  <h3 style={{ marginBottom: '1.25rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                    <Calendar size={18} style={{ color: 'var(--secondary)' }} />
+                    Monthly Allocation Engine
+                    <span style={{ fontSize: '0.75rem', color: 'var(--text-dimmed)', fontWeight: 400 }}>— Month 1 Projection</span>
+                  </h3>
+
+                  {/* Income breakdown */}
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '0.65rem', marginBottom: '1.25rem' }}>
+                    {[
+                      { label: 'Total Income', amount: totalIncome, color: '#34d399', operator: '' },
+                      { label: 'Monthly Expenses', amount: Math.max(totalExpenses, 28000), color: '#fbbf24', operator: '−' },
+                      { label: 'Mandatory EMIs', amount: totalEMI, color: '#f87171', operator: '−' },
+                    ].map((row, i) => (
+                      <div key={i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.65rem 0.85rem', background: 'rgba(255,255,255,0.02)', borderRadius: '10px' }}>
+                        <span style={{ fontSize: '0.88rem', color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                          {row.operator && <span style={{ fontWeight: 700, color: 'var(--text-dimmed)', fontSize: '1rem', width: '16px' }}>{row.operator}</span>}
+                          {!row.operator && <span style={{ width: '16px' }} />}
+                          {row.label}
+                        </span>
+                        <strong style={{ color: row.color, fontSize: '0.95rem' }}>{userProfile.currency}{row.amount.toLocaleString()}</strong>
+                      </div>
+                    ))}
+                    <div style={{ borderTop: '1px solid rgba(255,255,255,0.08)', paddingTop: '0.65rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.75rem 0.85rem', background: cashFlow > 0 ? 'rgba(168,85,247,0.1)' : 'rgba(239,68,68,0.08)', borderRadius: '10px', border: cashFlow > 0 ? '1px solid rgba(168,85,247,0.3)' : '1px solid rgba(239,68,68,0.25)' }}>
+                      <strong style={{ fontSize: '0.95rem', color: cashFlow > 0 ? 'var(--primary)' : 'var(--danger)' }}>= Available Cash Flow</strong>
+                      <strong style={{ color: cashFlow > 0 ? 'var(--primary)' : 'var(--danger)', fontSize: '1.1rem' }}>{userProfile.currency}{cashFlow.toLocaleString()}</strong>
+                    </div>
+                  </div>
+
+                  {/* Allocation Split */}
+                  {cashFlow > 0 && (
+                    <>
+                      <h4 style={{ fontSize: '0.88rem', color: 'var(--text-muted)', marginBottom: '0.85rem', fontWeight: 600 }}>
+                        How the engine allocates your ₹{cashFlow.toLocaleString()} based on your <span style={{ color: 'var(--primary)' }}>{plannerStyle}</span> preference:
+                      </h4>
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
+                        <div style={{ padding: '1rem', background: 'rgba(239,68,68,0.08)', borderRadius: '12px', border: '1px solid rgba(239,68,68,0.2)', textAlign: 'center' }}>
+                          <div style={{ fontSize: '0.75rem', color: '#f87171', fontWeight: 700, textTransform: 'uppercase', marginBottom: '0.35rem' }}>💸 Debt Acceleration</div>
+                          <div style={{ fontSize: '1.5rem', fontWeight: 800, color: '#f87171', fontFamily: 'var(--font-display)' }}>{userProfile.currency}{Math.round(debtSplit).toLocaleString()}</div>
+                          <div style={{ fontSize: '0.72rem', color: 'var(--text-dimmed)', marginTop: '0.25rem' }}>
+                            {plannerStyle === 'AGGRESSIVE' ? '100% surplus → debt' : plannerStyle === 'BALANCED' ? '70% surplus → debt' : '40% surplus → debt'}
+                          </div>
+                        </div>
+                        <div style={{ padding: '1rem', background: 'rgba(16,185,129,0.08)', borderRadius: '12px', border: '1px solid rgba(16,185,129,0.2)', textAlign: 'center' }}>
+                          <div style={{ fontSize: '0.75rem', color: '#34d399', fontWeight: 700, textTransform: 'uppercase', marginBottom: '0.35rem' }}>🌱 Savings / Emergency</div>
+                          <div style={{ fontSize: '1.5rem', fontWeight: 800, color: '#34d399', fontFamily: 'var(--font-display)' }}>{userProfile.currency}{Math.round(savingsSplit).toLocaleString()}</div>
+                          <div style={{ fontSize: '0.72rem', color: 'var(--text-dimmed)', marginTop: '0.25rem' }}>
+                            {plannerStyle === 'AGGRESSIVE' ? 'Min savings reserve only' : plannerStyle === 'BALANCED' ? '30% + your reserve' : '60% + your reserve'}
+                          </div>
+                        </div>
+                      </div>
+                    </>
+                  )}
+
+                  {cashFlow <= 0 && (
+                    <div style={{ padding: '1rem', background: 'rgba(239,68,68,0.08)', borderRadius: '12px', border: '1px solid rgba(239,68,68,0.2)', textAlign: 'center', color: '#f87171' }}>
+                      ⚠️ Your income is fully committed to expenses + EMIs. No acceleration possible right now. Focus on minimum payments and explore ways to increase income or cut expenses.
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
+
+            {/* ── PANEL 5: AI Financial Coach ── */}
+            {aiAnalysis?.coachingInsights && aiAnalysis.coachingInsights.length > 0 && (
+              <div className="premium-card" style={{ marginBottom: '2rem' }}>
+                <h3 style={{ marginBottom: '1.25rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                  <Brain size={18} style={{ color: 'var(--primary)' }} />
+                  AI Financial Coach
+                  <span style={{ fontSize: '0.72rem', color: 'var(--text-dimmed)', fontWeight: 400, marginLeft: '0.25rem' }}>— personalized insights from your actual data</span>
+                </h3>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.85rem' }}>
+                  {aiAnalysis.coachingInsights.map((insight, idx) => (
+                    <div key={idx} style={{
+                      padding: '1rem 1.25rem',
+                      background: idx === 0 ? 'rgba(168,85,247,0.08)' : 'rgba(255,255,255,0.02)',
+                      border: `1px solid ${idx === 0 ? 'rgba(168,85,247,0.25)' : 'rgba(255,255,255,0.05)'}`,
+                      borderRadius: '12px',
+                      fontSize: '0.9rem',
+                      lineHeight: '1.5',
+                      color: 'var(--text-main)',
+                      animation: 'fadeIn 0.4s ease'
+                    }}>
+                      {insight}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* ── PANEL 6: Which Debt To Pay First ── */}
+            {loansWithPayments.length > 0 && (
+              <div className="premium-card" style={{ marginBottom: '2rem' }}>
+                <h3 style={{ marginBottom: '1.25rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                  <AlertTriangle size={18} style={{ color: '#fbbf24' }} />
+                  Which Debt To Pay First
+                  <span style={{ fontSize: '0.72rem', color: 'var(--text-dimmed)', fontWeight: 400, marginLeft: '0.25rem' }}>— ranked by priority, rate & risk</span>
+                </h3>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.85rem' }}>
+                  {[...loansWithPayments]
+                    .filter(lw => lw.payments.some(p => !p.isPaid))
+                    .sort((a, b) => {
+                      const getPriVal = (p?: string) => p === 'critical' ? 4 : p === 'high' ? 3 : p === 'medium' ? 2 : 1;
+                      const pA = getPriVal(a.loan.priority);
+                      const pB = getPriVal(b.loan.priority);
+                      if (pA !== pB) return pB - pA;
+                      return (b.loan.rate || 0) - (a.loan.rate || 0);
+                    })
+                    .map((lw, rank) => {
+                      const remaining = lw.payments.filter(p => !p.isPaid).reduce((s, p) => s + p.amount, 0);
+                      const priority = lw.loan.priority || 'medium';
+                      const priColor = priority === 'critical' ? '#f87171' : priority === 'high' ? '#fb923c' : priority === 'medium' ? '#c084fc' : '#60a5fa';
+                      const cashFlow = Math.max(0, totalIncome - Math.max(totalExpenses, 28000) - totalEMI);
+                      const forDebt = Math.max(0, cashFlow - plannerMinSavings);
+                      const extraThisMonth = rank === 0 ? Math.round(forDebt * (plannerStyle === 'AGGRESSIVE' ? 1.0 : plannerStyle === 'BALANCED' ? 0.7 : 0.4)) : 0;
+                      const reason = priority === 'critical' ? 'Highest risk — penalties, CIBIL & collections' :
+                        priority === 'high' ? `High interest (${lw.loan.rate}% p.a.) — expensive to hold` :
+                        rank === 0 ? 'Largest balance — clear this first for max impact' : 'Standard priority — pay minimum EMI';
+                      return (
+                        <div key={lw.loan.id} style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          padding: '1rem 1.25rem',
+                          background: rank === 0 ? 'rgba(168,85,247,0.08)' : 'rgba(255,255,255,0.02)',
+                          borderRadius: '12px',
+                          border: rank === 0 ? '1px solid rgba(168,85,247,0.25)' : '1px solid rgba(255,255,255,0.04)',
+                          flexWrap: 'wrap',
+                          gap: '0.75rem'
+                        }}>
+                          {/* Rank */}
+                          <div style={{
+                            width: '36px', height: '36px', borderRadius: '50%',
+                            background: rank === 0 ? 'var(--primary)' : 'rgba(255,255,255,0.06)',
+                            display: 'flex', alignItems: 'center', justifyContent: 'center',
+                            fontWeight: 800, fontSize: '0.9rem', flexShrink: 0,
+                            color: rank === 0 ? 'white' : 'var(--text-muted)'
+                          }}>
+                            #{rank + 1}
+                          </div>
+
+                          {/* Debt Info */}
+                          <div style={{ flex: 1, minWidth: '180px' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+                              <strong style={{ fontSize: '0.95rem' }}>{lw.loan.name}</strong>
+                              <span style={{ fontSize: '0.68rem', fontWeight: 700, padding: '0.1rem 0.45rem', borderRadius: '6px', background: `${priColor}22`, color: priColor, border: `1px solid ${priColor}44` }}>
+                                {priority.toUpperCase()}
+                              </span>
+                            </div>
+                            <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)', marginTop: '0.2rem' }}>
+                              {lw.loan.lender} • {lw.loan.rate ? `${lw.loan.rate}% p.a.` : '0% interest'} • {reason}
+                            </div>
+                          </div>
+
+                          {/* Amounts */}
+                          <div style={{ display: 'flex', gap: '1.5rem', alignItems: 'center', flexWrap: 'wrap' }}>
+                            <div style={{ textAlign: 'right' }}>
+                              <div style={{ fontSize: '0.7rem', color: 'var(--text-dimmed)' }}>Outstanding</div>
+                              <div style={{ fontWeight: 700, color: '#fbbf24', fontSize: '0.95rem' }}>₹{Math.round(remaining).toLocaleString()}</div>
+                            </div>
+                            {lw.loan.dueDate && (
+                              <div style={{ textAlign: 'right' }}>
+                                <div style={{ fontSize: '0.7rem', color: 'var(--text-dimmed)' }}>Due</div>
+                                <div style={{ fontWeight: 600, fontSize: '0.85rem' }}>{lw.loan.dueDate}</div>
+                              </div>
+                            )}
+                            {rank === 0 && extraThisMonth > 0 && (
+                              <div style={{ textAlign: 'right' }}>
+                                <div style={{ fontSize: '0.7rem', color: '#34d399' }}>Extra This Month</div>
+                                <div style={{ fontWeight: 700, color: '#34d399', fontSize: '0.95rem' }}>+₹{extraThisMonth.toLocaleString()}</div>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+                </div>
+              </div>
+            )}
+
+            {/* Separator */}
+            <div style={{
+              display: 'flex', alignItems: 'center', gap: '1rem', margin: '2rem 0',
+              fontSize: '0.78rem', color: 'var(--text-dimmed)'
+            }}>
+              <div style={{ flex: 1, height: '1px', background: 'rgba(255,255,255,0.06)' }} />
+              <span style={{ padding: '0.25rem 0.85rem', background: 'rgba(255,255,255,0.03)', borderRadius: '8px', border: '1px solid rgba(255,255,255,0.06)' }}>
+                What-If Simulator & Detailed Analysis
+              </span>
+              <div style={{ flex: 1, height: '1px', background: 'rgba(255,255,255,0.06)' }} />
+            </div>
+
+            {/* ─── existing Smart Payoff Context Simulator card follows ─── */}
             <div className="premium-card glow-card" style={{ marginBottom: '2rem', borderLeftWidth: '5px', borderLeftColor: 'var(--primary)' }}>
+
               <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '0.5rem', flexWrap: 'wrap' }}>
                 <Sparkles size={20} style={{ color: 'var(--primary)' }} />
                 <h3 style={{ margin: 0 }}>Smart Payoff Context Simulator</h3>

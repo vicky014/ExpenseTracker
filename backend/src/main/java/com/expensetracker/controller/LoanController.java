@@ -233,6 +233,17 @@ public class LoanController {
             loan.setMinimumRequired(loanDetails.getMinimumRequired());
             loan.setDueDate(loanDetails.getDueDate());
             loan.setSettlementEligible(loanDetails.getSettlementEligible());
+
+            // Dynamic Strategy Engine Fields
+            if (loanDetails.getEarlyClosureCharges() != null) {
+                loan.setEarlyClosureCharges(loanDetails.getEarlyClosureCharges());
+            }
+            if (loanDetails.getRemainingTenure() != null) {
+                loan.setRemainingTenure(loanDetails.getRemainingTenure());
+            }
+            if (loanDetails.getCreditorType() != null) {
+                loan.setCreditorType(loanDetails.getCreditorType());
+            }
             
             Loan saved = loanRepository.save(loan);
             return ResponseEntity.ok(saved);

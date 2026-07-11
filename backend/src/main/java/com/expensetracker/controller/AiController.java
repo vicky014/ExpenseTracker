@@ -38,6 +38,10 @@ public class AiController {
         private String lumpSumTargetLoanName;
         private Double salaryHikePercent;
         private String customText;
+        // Dynamic Strategy Engine: user goal and savings target
+        private String userGoal;                  // DEBT_FREE_FAST, MINIMIZE_STRESS, MAINTAIN_EMERGENCY_FUND, SAVE_WHILE_PAYING, AGGRESSIVE, BALANCED, CONSERVATIVE
+        private Double minimumSavingsRequirement; // Monthly savings the user wants to keep aside
+        private Double emergencyFundTarget;       // Emergency fund target amount
 
         // Getters and Setters
         public Long getUserId() { return userId; }
@@ -52,6 +56,12 @@ public class AiController {
         public void setSalaryHikePercent(Double salaryHikePercent) { this.salaryHikePercent = salaryHikePercent; }
         public String getCustomText() { return customText; }
         public void setCustomText(String customText) { this.customText = customText; }
+        public String getUserGoal() { return userGoal; }
+        public void setUserGoal(String userGoal) { this.userGoal = userGoal; }
+        public Double getMinimumSavingsRequirement() { return minimumSavingsRequirement != null ? minimumSavingsRequirement : 0.0; }
+        public void setMinimumSavingsRequirement(Double minimumSavingsRequirement) { this.minimumSavingsRequirement = minimumSavingsRequirement; }
+        public Double getEmergencyFundTarget() { return emergencyFundTarget != null ? emergencyFundTarget : 0.0; }
+        public void setEmergencyFundTarget(Double emergencyFundTarget) { this.emergencyFundTarget = emergencyFundTarget; }
     }
 
     // Response models
@@ -136,6 +146,19 @@ public class AiController {
         private StrategyResult relationshipProtection;
         private StrategyResult aiAdaptive;
         
+        // Named Dynamic Strategy Engine results
+        private StrategyResult aggressiveStrategy;        // maps to Avalanche + full surplus
+        private StrategyResult balancedStrategy;          // maps to Balanced
+        private StrategyResult cashFlowProtectionStrategy; // maps to CashflowRelief
+        
+        // Dynamic Cash Flow Breakdown
+        private Double availableCashFlow;            // income - expenses - mandatory EMIs
+        private Double availableForAcceleration;     // availableCashFlow - minimumSavingsRequirement
+        private Double minimumSavingsRequirement;    // user-defined monthly savings target
+        
+        // AI Financial Coach Insights
+        private List<String> coachingInsights;
+        
         // Advanced Analytics
         private Double financialStressScore;
         private String harassmentRiskLevel;
@@ -175,7 +198,23 @@ public class AiController {
         public void setRelationshipProtection(StrategyResult relationshipProtection) { this.relationshipProtection = relationshipProtection; }
         public StrategyResult getAiAdaptive() { return aiAdaptive; }
         public void setAiAdaptive(StrategyResult aiAdaptive) { this.aiAdaptive = aiAdaptive; }
-        
+
+        public StrategyResult getAggressiveStrategy() { return aggressiveStrategy; }
+        public void setAggressiveStrategy(StrategyResult aggressiveStrategy) { this.aggressiveStrategy = aggressiveStrategy; }
+        public StrategyResult getBalancedStrategy() { return balancedStrategy; }
+        public void setBalancedStrategy(StrategyResult balancedStrategy) { this.balancedStrategy = balancedStrategy; }
+        public StrategyResult getCashFlowProtectionStrategy() { return cashFlowProtectionStrategy; }
+        public void setCashFlowProtectionStrategy(StrategyResult cashFlowProtectionStrategy) { this.cashFlowProtectionStrategy = cashFlowProtectionStrategy; }
+
+        public Double getAvailableCashFlow() { return availableCashFlow; }
+        public void setAvailableCashFlow(Double availableCashFlow) { this.availableCashFlow = availableCashFlow; }
+        public Double getAvailableForAcceleration() { return availableForAcceleration; }
+        public void setAvailableForAcceleration(Double availableForAcceleration) { this.availableForAcceleration = availableForAcceleration; }
+        public Double getMinimumSavingsRequirement() { return minimumSavingsRequirement; }
+        public void setMinimumSavingsRequirement(Double minimumSavingsRequirement) { this.minimumSavingsRequirement = minimumSavingsRequirement; }
+        public List<String> getCoachingInsights() { return coachingInsights; }
+        public void setCoachingInsights(List<String> coachingInsights) { this.coachingInsights = coachingInsights; }
+
         public Double getFinancialStressScore() { return financialStressScore; }
         public void setFinancialStressScore(Double financialStressScore) { this.financialStressScore = financialStressScore; }
         public String getHarassmentRiskLevel() { return harassmentRiskLevel; }
@@ -458,6 +497,105 @@ public class AiController {
         response.setSurvival(survivalRes);
         response.setRelationshipProtection(relationshipRes);
         response.setAiAdaptive(adaptiveRes);
+        
+        // Named Dynamic Strategy Engine results
+        response.setAggressiveStrategy(avalancheRes);
+        response.setBalancedStrategy(balancedRes);
+        response.setCashFlowProtectionStrategy(cashflowRes);
+        
+        // Dynamic Cash Flow Breakdown
+        double minSavings = request.getMinimumSavingsRequirement();
+        double availableCashFlow = Math.max(0.0, totalIncome - totalExpenses - totalEmi);
+        double availableForAcceleration = Math.max(0.0, availableCashFlow - minSavings);
+        response.setAvailableCashFlow(availableCashFlow);
+        response.setAvailableForAcceleration(availableForAcceleration);
+        response.setMinimumSavingsRequirement(minSavings);
+        
+        // 5a. Generate AI Financial Coach Insights
+        List<String> coachingInsights = new ArrayList<>();
+        
+        // Insight 1: Available cash flow recommendation
+        if (availableForAcceleration > 0) {
+            coachingInsights.add(String.format(
+                "💡 Based on your income and obligations, you can safely allocate ₹%,.0f extra this month towards debt repayment without touching your essentials or savings.",
+                availableForAcceleration));
+        } else if (availableCashFlow > 0) {
+            coachingInsights.add(String.format(
+                "💡 Your available cash flow this month is ₹%,.0f after EMIs and expenses. Consider allocating at least a portion towards accelerating your highest-priority debt.",
+                availableCashFlow));
+        } else {
+            coachingInsights.add("⚠️ Your current income is fully committed to expenses and EMIs. Focus on minimum payments only and look for opportunities to reduce discretionary spending.");
+        }
+        
+        // Insight 2: Best debt to close early (highest rate + early closure cost analysis)
+        if (!loans.isEmpty()) {
+            Loan bestEarlyClose = null;
+            double bestSaving = 0.0;
+            for (Loan l : loans) {
+                double balance = currentBalances.getOrDefault(l.getId(), l.getPrincipal());
+                if (balance <= 0) continue;
+                double monthlyRate = (l.getRate() != null ? l.getRate() : 0.0) / 100.0 / 12.0;
+                int remTenure = l.getRemainingTenure() != null ? l.getRemainingTenure() : (l.getTenure() != null ? l.getTenure() : 12);
+                double totalInterestRemaining = balance * monthlyRate * remTenure;
+                double closureFee = l.getEarlyClosureCharges() != null ? l.getEarlyClosureCharges() : 0.0;
+                double netSaving = totalInterestRemaining - closureFee;
+                if (netSaving > bestSaving) {
+                    bestSaving = netSaving;
+                    bestEarlyClose = l;
+                }
+            }
+            if (bestEarlyClose != null && bestSaving > 0) {
+                int monthsSaved = (int) Math.ceil(bestSaving / (bestEarlyClose.getEmi() != null ? bestEarlyClose.getEmi() : 1000));
+                coachingInsights.add(String.format(
+                    "🎯 Closing **%s** early will save approximately ₹%,.0f in remaining interest%s. This would free up ₹%,.0f/month for other financial goals.",
+                    bestEarlyClose.getName(),
+                    bestSaving,
+                    bestEarlyClose.getEarlyClosureCharges() > 0 ? String.format(" (after ₹%,.0f closure fee)", bestEarlyClose.getEarlyClosureCharges()) : "",
+                    bestEarlyClose.getEmi() != null ? bestEarlyClose.getEmi() : 0.0));
+            }
+        }
+        
+        // Insight 3: Lump sum bonus impact
+        if (simLumpSum > 0 && avalancheRes.getMonthsSaved() > 0) {
+            coachingInsights.add(String.format(
+                "🎉 If you apply a ₹%,.0f lump sum to your highest-priority debt, your debt-free date moves from **%s** (baseline) to **%s** — that's %d months faster!",
+                simLumpSum,
+                baselineRes.getDebtFreeDate(),
+                avalancheRes.getDebtFreeDate(),
+                avalancheRes.getMonthsSaved()));
+        }
+        
+        // Insight 4: EMI ratio health check
+        if (emiRatio > 50) {
+            coachingInsights.add(String.format(
+                "⚡ Your EMI-to-income ratio is **%.1f%%** (above the safe threshold of 40%%). Prioritize closing your highest EMI debt first to quickly restore financial breathing room.",
+                emiRatio));
+        } else if (emiRatio > 0) {
+            coachingInsights.add(String.format(
+                "✅ Your EMI-to-income ratio is a healthy **%.1f%%**. You have capacity to accelerate repayments. The Aggressive strategy can make you debt-free %d months sooner.",
+                emiRatio, avalancheRes.getMonthsSaved()));
+        }
+        
+        // Insight 5: Priority debt alert
+        long highPriorityCount = loans.stream()
+            .filter(l -> "high".equals(l.getPriority()) || "critical".equals(l.getPriority()))
+            .filter(l -> currentBalances.getOrDefault(l.getId(), 0.0) > 0)
+            .count();
+        if (highPriorityCount > 0) {
+            double highPriorityEmi = loans.stream()
+                .filter(l -> "high".equals(l.getPriority()) || "critical".equals(l.getPriority()))
+                .filter(l -> currentBalances.getOrDefault(l.getId(), 0.0) > 0)
+                .mapToDouble(Loan::getEmi)
+                .sum();
+            coachingInsights.add(String.format(
+                "🔥 You have %d high-priority debt(s) requiring ₹%,.0f/month in mandatory EMIs. Never miss these payments — they carry the highest risk of penalties, CIBIL impact, or collection calls.",
+                highPriorityCount, highPriorityEmi));
+        }
+        
+        if (coachingInsights.isEmpty()) {
+            coachingInsights.add("📊 Add income sources, expenses, and loans to receive personalized coaching insights tailored to your exact financial situation.");
+        }
+        response.setCoachingInsights(coachingInsights);
         
         // Advanced analytics
         response.setFinancialStressScore(stressScore);

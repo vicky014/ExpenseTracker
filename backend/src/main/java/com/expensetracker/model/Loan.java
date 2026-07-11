@@ -33,6 +33,11 @@ public class Loan {
     private LocalDate dueDate;
     private Boolean settlementEligible = false;
 
+    // Dynamic Strategy Engine Fields
+    private Double earlyClosureCharges = 0.0;    // Prepayment penalty / early closure fee
+    private Integer remainingTenure;              // Remaining months (may differ from original tenure)
+    private String creditorType = "BANK";         // BANK, NBFC, FRIEND, FAMILY, EMPLOYER, OTHER
+
     // Getters and Setters
     public Long getId() { return id; }
     public void setId(Long id) { this.id = id; }
@@ -109,5 +114,18 @@ public class Loan {
 
     public Boolean getSettlementEligible() { return settlementEligible != null ? settlementEligible : false; }
     public void setSettlementEligible(Boolean settlementEligible) { this.settlementEligible = settlementEligible; }
+
+    public Double getEarlyClosureCharges() { return earlyClosureCharges != null ? earlyClosureCharges : 0.0; }
+    public void setEarlyClosureCharges(Double earlyClosureCharges) { this.earlyClosureCharges = earlyClosureCharges; }
+
+    public Integer getRemainingTenure() {
+        if (remainingTenure != null) return remainingTenure;
+        // Fallback: derive from unpaid payment count when not explicitly set
+        return tenure;
+    }
+    public void setRemainingTenure(Integer remainingTenure) { this.remainingTenure = remainingTenure; }
+
+    public String getCreditorType() { return creditorType != null ? creditorType : "BANK"; }
+    public void setCreditorType(String creditorType) { this.creditorType = creditorType; }
 }
 
